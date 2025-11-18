@@ -1,97 +1,66 @@
 # src/evaluate.py
-import argparse
-import json
+import torch
 import numpy as np
-import pandas as pd
-import joblib
+import os
+from sklearn.metrics import classification_report, confusion_matrix, precision_recall_curve
+import matplotlib.pyplot as plt
 
-from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score,
-    roc_auc_score, average_precision_score
-)
 
-from src.config import PATHS
+def evaluate_model(model, data, num_docs, result_dir, target_recall=None, fixed_threshold=0.5):
+    """
+    Evaluate TextGCN model on test (document) nodes.
+    Supports either a fixed threshold or threshold tuning by recall.
+    """
+    model.eval()
+    device = next(model.parameters()).device
 
-def load_splits():
-    with open(PATHS.data_processed / "splits.json", "r", encoding="utf-8") as f:
-        return json.load(f)
+    # Forward pass
+    with torch.no_grad():
+        out = model(data.x, data.edge_index, data.edge_weight)
+        probs = torch.softmax(out[:num_docs], dim=1)[:, 1].cpu().numpy()
 
-def subset_by_ids(df: pd.DataFrame, ids):
-    ids = set(map(str, ids))
-    return df[df["id"].astype(str).isin(ids)].copy()
+    # Ground truth labels
+    y_true = data.y[:num_docs].cpu().numpy()
 
-def score_to_pred(score, model_name):
-    # LinearSVC uses decision_function: threshold at 0.0
-    if "svm" in model_name:
-        return (score >= 0.0).astype(int)
-    return (score >= 0.5).astype(int)
+    # --- Threshold selection ---
+    if target_recall is not None:
+        prec, rec, thresh = precision_recall_curve(y_true, probs)
+        best_idx = np.argmin(np.abs(rec - target_recall))
+        best_thresh = thresh[best_idx]
+        print(f"🎯 Tuned threshold for recall={target_recall:.2f}: {best_thresh:.3f} "
+              f"(precision={prec[best_idx]:.3f}, recall={rec[best_idx]:.3f})")
+    else:
+        best_thresh = fixed_threshold
+        print(f"🔧 Using fixed threshold = {best_thresh:.3f}")
 
-def eval_emscad(y_true, score, pred):
-    return {
-        "accuracy": accuracy_score(y_true, pred),
-        "precision": precision_score(y_true, pred, zero_division=0),
-        "recall": recall_score(y_true, pred, zero_division=0),
-        "f1": f1_score(y_true, pred, zero_division=0),
-        "roc_auc": roc_auc_score(y_true, score),
-        "pr_auc": average_precision_score(y_true, score),
-    }
+    preds = (probs >= best_thresh).astype(int)
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model", choices=["baselines"], default="baselines")
-    args = ap.parse_args()
+    # --- Evaluation report ---
+    report = classification_report(y_true, preds, digits=4, target_names=["Real", "Fake"])
+    cm = confusion_matrix(y_true, preds)
 
-    PATHS.reports.mkdir(parents=True, exist_ok=True)
+    print("\n--- Test Results ---")
+    print(report)
+    print("Confusion Matrix:\n", cm)
 
-    em = pd.read_csv(PATHS.data_processed / "emscad.csv")
-    ob = pd.read_csv(PATHS.data_processed / "openbay.csv")
-    splits = load_splits()
+    # --- Save results ---
+    os.makedirs(result_dir, exist_ok=True)
+    with open(os.path.join(result_dir, "report.txt"), "w") as f:
+        f.write("--- Test Results ---\n")
+        f.write(report + "\n")
+        f.write("Confusion Matrix:\n")
+        f.write(str(cm))
 
-    train = subset_by_ids(em, splits["train_ids"])
-    val   = subset_by_ids(em, splits["val_ids"])
-    test  = subset_by_ids(em, splits["test_ids"])
+    # --- Optional: plot Precision–Recall curve ---
+    prec, rec, _ = precision_recall_curve(y_true, probs)
+    plt.figure()
+    plt.plot(rec, prec, label="PR Curve")
+    plt.xlabel("Recall")
+    plt.ylabel("Precision")
+    plt.title("Precision–Recall Curve (Fake Job Detection)")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(os.path.join(result_dir, "precision_recall_curve.png"))
+    plt.close()
 
-    vec = joblib.load(PATHS.models_baselines / "vectorizer.joblib")
-    X_test = vec.transform(test["text"])
-    y_test = test["fraudulent"].astype(int).values
-
-    # OpenDataBay robustness set
-    X_ob = vec.transform(ob["text"])
-
-    rows = []
-    for model_path in sorted(PATHS.models_baselines.glob("tfidf_*.joblib")):
-        name = model_path.stem
-        model = joblib.load(model_path)
-
-        if hasattr(model, "predict_proba"):
-            score = model.predict_proba(X_test)[:, 1]
-            ob_score = model.predict_proba(X_ob)[:, 1]
-        else:
-            score = model.decision_function(X_test)
-            ob_score = model.decision_function(X_ob)
-
-        pred = score_to_pred(score, name)
-        metrics = eval_emscad(y_test, score, pred)
-
-        # OpenDataBay: fraud-only in your file (all 1s)
-        # So "recall" = fraction predicted as fraud at chosen threshold.
-        ob_pred = score_to_pred(ob_score, name)
-        openbay_recall = float(np.mean(ob_pred))
-
-        rows.append({
-            "model": name,
-            **metrics,
-            "openbay_recall": openbay_recall,
-            "openbay_mean_score": float(np.mean(ob_score)),
-            "openbay_median_score": float(np.median(ob_score)),
-        })
-
-    out = pd.DataFrame(rows).sort_values("f1", ascending=False)
-    out_path = PATHS.reports / "metrics_baselines.csv"
-    out.to_csv(out_path, index=False)
-
-    print("✅ Saved:", out_path)
-    print(out)
-
-if __name__ == "__main__":
-    main()
+    print(f"✅ Results & plots saved to {result_dir}")

@@ -1,34 +1,37 @@
-# src/config.py
-from dataclasses import dataclass
-from pathlib import Path
+# src/config.py  -- precision-focused setup
 
-@dataclass(frozen=True)
-class Paths:
-    root: Path = Path(".")
-    data_raw: Path = Path("data/raw")
-    data_processed: Path = Path("data/processed")
-    models_baselines: Path = Path("models/baselines")
-    models_textgcn: Path = Path("models/textgcn")
-    models_comparison: Path = Path("models/comparison")
-    reports: Path = Path("reports")
-    figures: Path = Path("reports/figures")
+DATA_PATH = "data/fake_job_postings.csv"
 
-@dataclass(frozen=True)
-class Settings:
-    seed: int = 42
+# preprocessing
+MIN_WORD_FREQ = 10          # prune rare words
+MAX_TFIDF_FEATURES = 5000
+SVD_DIM = 300
 
-    # EMSCAD split proportions
-    test_size: float = 0.20   # final test share
-    val_size: float = 0.10    # validation share (from full dataset)
+# graph
+USE_PMI_EDGES = True
+PMI_WINDOW = 20
+PMI_MIN_COOCCUR = 10        # drop weak PMI links
 
-    # Text building
-    text_fields: tuple = ("title", "company_profile", "description", "requirements", "benefits")
-    sep_token: str = " [SEP] "
+# model
+HIDDEN_DIM = 256
+DROPOUT = 0.6
 
-    # TF-IDF
-    tfidf_min_df: int = 2
-    tfidf_max_df: float = 0.9
-    tfidf_ngrams: tuple = (1, 2)
+# training
+LR = 0.003                  # smaller learning rate for stable training
+WEIGHT_DECAY = 5e-4
+EPOCHS = 300
+EARLY_STOP_PATIENCE = 40
+RANDOM_STATE = 42
 
-PATHS = Paths()
-CFG = Settings()
+# imbalance handling  →  use Focal Loss instead of class weights
+USE_FOCAL_LOSS = True
+ALPHA_POS = 0.55            # lower alpha → less fake bias
+GAMMA = 2.0
+REBALANCE_RATIO = 2         # keep 2:1 ratio real:fake in training only
+
+# threshold tuning  →  aim for higher precision
+TARGET_RECALL = 0.70
+
+# output
+MODEL_DIR = "outputs/models"
+RESULT_DIR = "outputs/results"
