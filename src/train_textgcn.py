@@ -129,22 +129,29 @@ class WordGCNPool(nn.Module):
     - Build doc representations by TF-IDF pooling: doc_vec = TFIDF * word_emb
     - Classify docs
     """
-    def __init__(self, num_words: int, hidden_dim=128, dropout=0.5):
+    def __init__(self, num_words: int, hidden_dim=128, dropout=0.5, residual_alpha=0.7):
         super().__init__()
         self.emb = nn.Embedding(num_words, hidden_dim)
         nn.init.xavier_uniform_(self.emb.weight)
 
         self.dropout = dropout
+        self.residual_alpha = residual_alpha
 
         # Two GCN "layers" (featureless except embeddings)
         self.lin1 = nn.Linear(hidden_dim, hidden_dim, bias=False)
         self.lin2 = nn.Linear(hidden_dim, hidden_dim, bias=False)
 
+        self.norm = nn.LayerNorm(hidden_dim)
+        self.mlp = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+        )
         self.classifier = nn.Linear(hidden_dim, 2)
 
     def gcn(self, A_norm):
-        H = self.emb.weight  # (V, d)
-        H = torch.sparse.mm(A_norm, H)
+        H0 = self.emb.weight  # (V, d)
+        H = torch.sparse.mm(A_norm, H0)
         H = self.lin1(H)
         H = F.relu(H)
         H = F.dropout(H, p=self.dropout, training=self.training)
@@ -152,7 +159,9 @@ class WordGCNPool(nn.Module):
         H = torch.sparse.mm(A_norm, H)
         H = self.lin2(H)
         H = F.relu(H)
-        return H  # (V, d)
+
+        H = (1.0 - self.residual_alpha) * H0 + self.residual_alpha * H
+        return self.norm(H)  # (V, d)
 
     def forward(self, A_norm, X_tfidf_sparse):
         """
@@ -160,7 +169,10 @@ class WordGCNPool(nn.Module):
         """
         word_H = self.gcn(A_norm)  # (V, d)
         doc_H = torch.sparse.mm(X_tfidf_sparse, word_H)  # (N, d)
+        doc_H0 = torch.sparse.mm(X_tfidf_sparse, self.emb.weight)  # (N, d)
+        doc_H = doc_H + doc_H0
         doc_H = F.dropout(doc_H, p=self.dropout, training=self.training)
+        doc_H = self.mlp(doc_H)
         logits = self.classifier(doc_H)  # (N, 2)
         return logits
 
@@ -184,16 +196,17 @@ def scipy_to_torch_sparse(X):
 
 @dataclass
 class TrainConfig:
-    hidden_dim: int = 128
-    dropout: float = 0.5
-    lr: float = 1e-3
-    weight_decay: float = 1e-4
-    epochs: int = 60
-    patience: int = 10
+    hidden_dim: int = 256
+    dropout: float = 0.35
+    lr: float = 3e-3
+    weight_decay: float = 1e-5
+    epochs: int = 80
+    patience: int = 12
 
-    window_size: int = 15
-    pmi_threshold: float = 1.0      # <-- CHANGE (was 0.0)
-    max_features: int = 20000       # <-- CHANGE (was 30000)
+    window_size: int = 20
+    pmi_threshold: float = 0.0
+    max_features: int = 40000
+    residual_alpha: float = 0.7
 
 
 
@@ -236,6 +249,7 @@ def main():
         ngram_range=(1, 2),  # <-- CHANGE (was 1,1)
         min_df=2,
         max_df=0.9,
+        sublinear_tf=True,
         max_features=cfg.max_features
     )
 
@@ -282,7 +296,12 @@ def main():
     # -------------------------
     # Model
     # -------------------------
-    model = WordGCNPool(num_words=num_words, hidden_dim=cfg.hidden_dim, dropout=cfg.dropout).to(device)
+    model = WordGCNPool(
+        num_words=num_words,
+        hidden_dim=cfg.hidden_dim,
+        dropout=cfg.dropout,
+        residual_alpha=cfg.residual_alpha,
+    ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
     best_val_f1 = -1.0
@@ -342,6 +361,7 @@ def main():
             "dropout": cfg.dropout,
             "window_size": cfg.window_size,
             "pmi_threshold": cfg.pmi_threshold,
+            "residual_alpha": cfg.residual_alpha,
         },
         PATHS.models_textgcn / "textgcn.pt"
     )
@@ -369,6 +389,7 @@ def main():
         "vocab_size": int(num_words),
         "pmi_window_size": int(cfg.window_size),
         "pmi_threshold": float(cfg.pmi_threshold),
+        "residual_alpha": float(cfg.residual_alpha),
     }
     out_path = PATHS.reports / "metrics_textgcn.csv"
     pd.DataFrame([metrics]).to_csv(out_path, index=False)
