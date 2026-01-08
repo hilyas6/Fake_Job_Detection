@@ -1,0 +1,2 @@
+model,emscad_test_f1,emscad_test_precision,emscad_test_recall,openbay_recall,openbay_mean_prob,openbay_median_prob,vocab_size,pmi_window_size,pmi_threshold
+textgcn_word_pmi_pool,0.2727272727272727,0.20727272727272728,0.3986013986013986,1.0,0.5055276155471802,0.5055912733078003,20000,15,1.0
