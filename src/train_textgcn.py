@@ -202,6 +202,7 @@ class TrainConfig:
     weight_decay: float = 1e-5
     epochs: int = 80
     patience: int = 12
+    label_smoothing: float = 0.05
 
     window_size: int = 20
     pmi_threshold: float = 0.0
@@ -214,15 +215,28 @@ class TrainConfig:
 # Train + evaluate
 # -----------------------------
 @torch.no_grad()
-def eval_split(model, A_norm, X, y_true):
+def eval_split(model, A_norm, X, y_true, threshold=0.5):
     model.eval()
     logits = model(A_norm, X)
-    pred = torch.argmax(logits, dim=1).cpu().numpy()
+    probs = F.softmax(logits, dim=1)[:, 1]
+    pred = (probs >= threshold).to(torch.long).cpu().numpy()
     y = y_true.cpu().numpy()
     f1 = f1_score(y, pred, zero_division=0)
     prec = precision_score(y, pred, zero_division=0)
     rec = recall_score(y, pred, zero_division=0)
     return f1, prec, rec
+
+
+@torch.no_grad()
+def find_best_threshold(model, A_norm, X, y_true, grid=None):
+    if grid is None:
+        grid = np.linspace(0.1, 0.9, 17)
+    best = {"threshold": 0.5, "f1": -1.0, "precision": 0.0, "recall": 0.0}
+    for t in grid:
+        f1, prec, rec = eval_split(model, A_norm, X, y_true, threshold=float(t))
+        if f1 > best["f1"] + 1e-6:
+            best = {"threshold": float(t), "f1": f1, "precision": prec, "recall": rec}
+    return best
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -289,7 +303,7 @@ def main():
     pos = (y_train == 1).sum().item()
     neg = (y_train == 0).sum().item()
     w0 = 1.0
-    w1 = (neg / max(pos, 1))
+    w1 = math.sqrt(neg / max(pos, 1))
     class_weights = torch.tensor([w0, w1], dtype=torch.float32, device=device)
     print(f"Class weights: {class_weights.tolist()}")
 
@@ -313,7 +327,12 @@ def main():
         opt.zero_grad()
 
         logits = model(A_norm, X_train)
-        loss = F.cross_entropy(logits, y_train, weight=class_weights)
+        loss = F.cross_entropy(
+            logits,
+            y_train,
+            weight=class_weights,
+            label_smoothing=cfg.label_smoothing,
+        )
         loss.backward()
         opt.step()
 
@@ -338,16 +357,26 @@ def main():
     # -------------------------
     # Final evaluation
     # -------------------------
-    test_f1, test_p, test_r = eval_split(model, A_norm, X_test, y_test)
-    print(f"\n✅ EMSCAD TEST | F1={test_f1:.4f} Precision={test_p:.4f} Recall={test_r:.4f}")
+    best_threshold = find_best_threshold(model, A_norm, X_val, y_val)
+    test_f1, test_p, test_r = eval_split(
+        model,
+        A_norm,
+        X_test,
+        y_test,
+        threshold=best_threshold["threshold"],
+    )
+    print(
+        f"\n✅ EMSCAD TEST | F1={test_f1:.4f} Precision={test_p:.4f} Recall={test_r:.4f} "
+        f"(threshold={best_threshold['threshold']:.2f})"
+    )
 
     # OpenDataBay is fraud-only => recall = fraction predicted as fraud
     model.eval()
     with torch.no_grad():
         ob_logits = model(A_norm, X_ob)
-        ob_pred = torch.argmax(ob_logits, dim=1).cpu().numpy()
-        openbay_recall = float(np.mean(ob_pred == 1))
         ob_probs = F.softmax(ob_logits, dim=1)[:, 1].cpu().numpy()
+        ob_pred = (ob_probs >= best_threshold["threshold"]).astype(int)
+        openbay_recall = float(np.mean(ob_pred == 1))
         print(f"✅ OpenDataBay (fraud-only) | recall={openbay_recall:.4f} | mean_prob={ob_probs.mean():.4f} median_prob={np.median(ob_probs):.4f}")
 
     # Save artifacts
@@ -390,6 +419,7 @@ def main():
         "pmi_window_size": int(cfg.window_size),
         "pmi_threshold": float(cfg.pmi_threshold),
         "residual_alpha": float(cfg.residual_alpha),
+        "threshold": float(best_threshold["threshold"]),
     }
     out_path = PATHS.reports / "metrics_textgcn.csv"
     pd.DataFrame([metrics]).to_csv(out_path, index=False)
