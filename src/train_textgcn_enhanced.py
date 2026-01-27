@@ -328,15 +328,14 @@ def main():
     ).to(device)
 
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-    scheduler_kwargs = {
-        "mode": "max",
-        "factor": 0.6,
-        "patience": 3,
-        "min_lr": 3e-5,
-    }
-    if "verbose" in torch.optim.lr_scheduler.ReduceLROnPlateau.__init__.__code__.co_varnames:
-        scheduler_kwargs["verbose"] = True
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, **scheduler_kwargs)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        opt,
+        mode="max",
+        factor=0.6,
+        patience=3,
+        min_lr=3e-5,
+        verbose=True,
+    )
 
     best_val_f1 = -1.0
     best_state = None
