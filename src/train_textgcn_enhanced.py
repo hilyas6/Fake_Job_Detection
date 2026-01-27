@@ -334,6 +334,7 @@ def main():
         factor=0.6,
         patience=3,
         min_lr=3e-5,
+        verbose=True,
     )
 
     best_val_f1 = -1.0
