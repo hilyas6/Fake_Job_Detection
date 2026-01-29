@@ -9,6 +9,7 @@ class Paths:
     data_processed: Path = Path("data/processed")
     models_baselines: Path = Path("models/baselines")
     models_textgcn: Path = Path("models/textgcn")
+    models_comparison: Path = Path("models/comparison")
     reports: Path = Path("reports")
     figures: Path = Path("reports/figures")
 

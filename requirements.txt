@@ -5,3 +5,6 @@ nltk
 torch
 torch-geometric
 matplotlib
+xgboost
+lightgbm
+transformers
