@@ -105,16 +105,13 @@ def normalize_sparse_adj(rows, cols, vals, n):
 # -----------------------------
 class ImprovedWordGCN(nn.Module):
     """
-    Enhanced TextGCN with deeper residual GCN blocks and a gated document fusion.
+    Based on your original working model with strategic improvements:
+    1. One extra GCN layer (3 instead of 2)
+    2. Slightly larger hidden dim
+    3. Better MLP classifier
     """
 
-    def __init__(
-        self,
-        num_words: int,
-        hidden_dim=384,
-        dropout=0.3,
-        residual_alpha=0.65,
-    ):
+    def __init__(self, num_words: int, hidden_dim=300, dropout=0.35, residual_alpha=0.7):
         super().__init__()
         self.emb = nn.Embedding(num_words, hidden_dim)
         nn.init.xavier_uniform_(self.emb.weight)
@@ -127,27 +124,18 @@ class ImprovedWordGCN(nn.Module):
         self.lin2 = nn.Linear(hidden_dim, hidden_dim, bias=False)
         self.lin3 = nn.Linear(hidden_dim, hidden_dim, bias=False)
 
-        self.norm1 = nn.LayerNorm(hidden_dim)
-        self.norm2 = nn.LayerNorm(hidden_dim)
-        self.norm3 = nn.LayerNorm(hidden_dim)
+        self.norm = nn.LayerNorm(hidden_dim)
 
         # Improved MLP (original had 1 layer, now 2)
         self.mlp = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
-            nn.GELU(),
-            nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.GELU(),
+            nn.ReLU(),
             nn.Dropout(dropout),
         )
         self.classifier = nn.Linear(hidden_dim // 2, 2)
-        self.gate = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.Sigmoid(),
-        )
 
     def gcn(self, A_norm):
         H0 = self.emb.weight  # (V, d)
@@ -155,33 +143,29 @@ class ImprovedWordGCN(nn.Module):
         # Layer 1
         H = torch.sparse.mm(A_norm, H0)
         H = self.lin1(H)
-        H = self.norm1(H)
-        H = F.gelu(H)
+        H = F.relu(H)
         H = F.dropout(H, p=self.dropout, training=self.training)
 
         # Layer 2
         H = torch.sparse.mm(A_norm, H)
         H = self.lin2(H)
-        H = self.norm2(H)
-        H = F.gelu(H)
+        H = F.relu(H)
         H = F.dropout(H, p=self.dropout, training=self.training)
 
         # Layer 3 (NEW)
         H = torch.sparse.mm(A_norm, H)
         H = self.lin3(H)
-        H = self.norm3(H)
-        H = F.gelu(H)
+        H = F.relu(H)
 
         # Residual connection
         H = (1.0 - self.residual_alpha) * H0 + self.residual_alpha * H
-        return H  # (V, d)
+        return self.norm(H)  # (V, d)
 
     def forward(self, A_norm, X_tfidf_sparse):
         word_H = self.gcn(A_norm)  # (V, d)
         doc_H = torch.sparse.mm(X_tfidf_sparse, word_H)  # (N, d)
         doc_H0 = torch.sparse.mm(X_tfidf_sparse, self.emb.weight)  # (N, d)
-        gate = self.gate(torch.cat([doc_H, doc_H0], dim=1))
-        doc_H = gate * doc_H + (1.0 - gate) * doc_H0
+        doc_H = doc_H + doc_H0
         doc_H = F.dropout(doc_H, p=self.dropout, training=self.training)
         doc_H = self.mlp(doc_H)
         logits = self.classifier(doc_H)  # (N, 2)
@@ -193,19 +177,18 @@ class ImprovedWordGCN(nn.Module):
 # -----------------------------
 @dataclass
 class TrainConfig:
-    hidden_dim: int = 384
-    dropout: float = 0.3
-    lr: float = 2e-3
-    weight_decay: float = 5e-6
-    epochs: int = 140
-    patience: int = 20
-    label_smoothing: float = 0.02
-    grad_clip_norm: float = 1.0
+    hidden_dim: int = 300  # Slightly larger than original 256
+    dropout: float = 0.35
+    lr: float = 3e-3
+    weight_decay: float = 1e-5
+    epochs: int = 100
+    patience: int = 15
+    label_smoothing: float = 0.05
 
-    window_size: int = 30
-    pmi_threshold: float = 0.1
-    max_features: int = 60000
-    residual_alpha: float = 0.65
+    window_size: int = 20
+    pmi_threshold: float = 0.0
+    max_features: int = 40000
+    residual_alpha: float = 0.7
 
 
 # -----------------------------
@@ -273,9 +256,9 @@ def main():
         tokenizer=tokenize,
         preprocessor=None,
         token_pattern=None,
-        ngram_range=(1, 3),
+        ngram_range=(1, 3),  # IMPROVED: trigrams instead of bigrams
         min_df=2,
-        max_df=0.95,
+        max_df=0.9,
         sublinear_tf=True,
         max_features=cfg.max_features
     )
@@ -327,15 +310,7 @@ def main():
         residual_alpha=cfg.residual_alpha,
     ).to(device)
 
-    opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        opt,
-        mode="max",
-        factor=0.6,
-        patience=3,
-        min_lr=3e-5,
-        verbose=True,
-    )
+    opt = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
     best_val_f1 = -1.0
     best_state = None
@@ -353,11 +328,9 @@ def main():
             label_smoothing=cfg.label_smoothing,
         )
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip_norm)
         opt.step()
 
         val_f1, val_p, val_r = eval_split(model, A_norm, X_val, y_val)
-        scheduler.step(val_f1)
 
         if epoch % 5 == 0 or epoch == 1:
             print(
@@ -397,7 +370,7 @@ def main():
               f"mean_prob={ob_probs.mean():.4f} median_prob={np.median(ob_probs):.4f}")
 
     # Save artifacts
-    joblib.dump(vec, PATHS.models_textgcn / "vectorizer_enhanced.joblib")
+    joblib.dump(vec, PATHS.models_textgcn / "vectorizer_improved.joblib")
 
     torch.save({
         "state_dict": model.state_dict(),
@@ -405,17 +378,17 @@ def main():
         "hidden_dim": cfg.hidden_dim,
         "dropout": cfg.dropout,
         "residual_alpha": cfg.residual_alpha,
-    }, PATHS.models_textgcn / "textgcn_enhanced.pt")
+    }, PATHS.models_textgcn / "textgcn_improved.pt")
 
     torch.save({
         "A_norm_indices": A_norm.coalesce().indices().cpu(),
         "A_norm_values": A_norm.coalesce().values().cpu(),
         "A_norm_size": A_norm.shape,
         "inv_vocab": inv_vocab,
-    }, PATHS.models_textgcn / "graph_cache_enhanced.pt")
+    }, PATHS.models_textgcn / "graph_cache_improved.pt")
 
     metrics = {
-        "model": "textgcn_enhanced",
+        "model": "textgcn_improved",
         "emscad_test_f1": float(test_f1),
         "emscad_test_precision": float(test_p),
         "emscad_test_recall": float(test_r),
@@ -425,8 +398,8 @@ def main():
         "threshold": float(best_threshold["threshold"]),
     }
 
-    pd.DataFrame([metrics]).to_csv(PATHS.reports / "metrics_textgcn_enhanced.csv", index=False)
-    print(f"\n✅ Saved enhanced model to {PATHS.models_textgcn}/")
+    pd.DataFrame([metrics]).to_csv(PATHS.reports / "metrics_textgcn_improved.csv", index=False)
+    print(f"\n✅ Saved improved model to {PATHS.models_textgcn}/")
 
 
 if __name__ == "__main__":

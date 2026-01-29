@@ -1,2 +1,2 @@
 model,emscad_test_f1,emscad_test_precision,emscad_test_recall,openbay_recall,openbay_mean_prob,vocab_size,threshold
-textgcn_improved,0.7656765676567657,0.725,0.8111888111888111,0.9903,0.8739385604858398,40000,0.5
+textgcn_improved,0.8351648351648352,0.8769230769230769,0.7972027972027972,0.9583,0.8162298798561096,40000,0.48
