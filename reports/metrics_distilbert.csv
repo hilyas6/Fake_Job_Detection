@@ -1,0 +1,2 @@
+model,emscad_test_f1,emscad_test_precision,emscad_test_recall,openbay_recall,openbay_mean_prob,openbay_median_prob,threshold
+distilbert,0.7619047619047619,0.6976744186046512,0.8391608391608392,0.8337,0.7562598586082458,0.7819867134094238,0.64

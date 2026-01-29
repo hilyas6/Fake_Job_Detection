@@ -1,0 +1,2 @@
+model,emscad_test_f1,emscad_test_precision,emscad_test_recall,openbay_recall,openbay_mean_prob,openbay_median_prob,threshold
+naive_bayes,0.24260355029585798,0.21025641025641026,0.2867132867132867,0.0,0.016462360659543415,0.015423975332599664,0.1

@@ -1,0 +1,2 @@
+model,emscad_test_f1,emscad_test_precision,emscad_test_recall,openbay_recall,openbay_mean_prob,openbay_median_prob,threshold
+xgboost,0.7835051546391752,0.7702702702702703,0.7972027972027972,0.998,0.8724004030227661,0.9207358956336975,0.24000000000000002

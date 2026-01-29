@@ -1,0 +1,60 @@
+How to run the code (end-to-end)
+
+Below is a step‑by‑step guide to run the training scripts and generate the comparison report. Each step uses the existing entrypoints in src/. I’m referencing the exact files where these commands are defined.
+
+1) Install dependencies
+Make sure your environment has the required packages, including XGBoost, LightGBM, and Transformers:
+
+pip install -r requirements.txt
+These dependencies are listed in the project requirements file.
+
+2) Prepare processed data (splits + text)
+This generates the processed CSVs and splits file used by all training scripts:
+
+python -m src.prep
+The prep module writes data/processed/emscad.csv, data/processed/openbay.csv, and data/processed/splits.json, which are required by the training scripts.
+
+3) Train the classical ML models (LogReg, NB, RF, XGBoost, LightGBM)
+This trains all five classical models on the same TF‑IDF features, saves artifacts, and writes per‑model metrics:
+
+python -m src.train_classical_models
+The script reads the processed datasets, builds TF‑IDF features, trains each model, saves the vectorizer and model artifacts, and writes metrics_*.csv files.
+
+4) Train Bi‑LSTM
+This trains the Bi‑LSTM using the same train/val/test splits, finds the best validation threshold, evaluates on test and OpenDataBay, and saves metrics:
+
+python -m src.train_bilstm
+The Bi‑LSTM pipeline is implemented in src/train_bilstm.py, including saving metrics_bilstm.csv and model artifacts.
+
+5) Train DistilBERT
+This fine‑tunes DistilBERT on the same splits and produces metrics consistent with the other models:
+
+python -m src.train_distilbert
+The DistilBERT training, evaluation, and artifact saving are defined in src/train_distilbert.py (including metrics_distilbert.csv).
+
+6) Compare all models in one report
+Once all the individual metrics_*.csv files exist, run the comparison script:
+
+python -m src.compare_models
+This aggregates all per‑model metrics into a single reports/metrics_model_comparison.csv, sorted by emscad_test_f1 so you can see the best-performing model.
+
+Optional: TextGCN Enhanced (already provided)
+If you also want to include the TextGCN enhanced model in the comparison, run:
+
+python -m src.train_textgcn_enhanced
+This script saves its own metrics file and model artifacts in the same reports/models structure, so it can be included in the comparison output once present.
+
+Summary of Key Commands
+✅ pip install -r requirements.txt
+
+✅ python -m src.prep
+
+✅ python -m src.train_classical_models
+
+✅ python -m src.train_bilstm
+
+✅ python -m src.train_distilbert
+
+✅ python -m src.compare_models
+
+If you want, I can also add a single “run all” script or Makefile target so you can execute the entire pipeline with one command.

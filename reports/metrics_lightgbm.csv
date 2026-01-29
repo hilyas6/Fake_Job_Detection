@@ -1,0 +1,2 @@
+model,emscad_test_f1,emscad_test_precision,emscad_test_recall,openbay_recall,openbay_mean_prob,openbay_median_prob,threshold
+lightgbm,0.8339483394833949,0.8828125,0.7902097902097902,0.9998,0.9451329394220975,0.9675208780336941,0.12000000000000001

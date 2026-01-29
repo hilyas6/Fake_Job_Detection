@@ -1,0 +1,2 @@
+model,emscad_test_f1,emscad_test_precision,emscad_test_recall,openbay_recall,openbay_mean_prob,openbay_median_prob,threshold
+random_forest,0.7320261437908496,0.6871165644171779,0.7832167832167832,1.0,0.47861475,0.4825,0.22
