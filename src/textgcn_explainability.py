@@ -15,6 +15,13 @@ import torch.nn.functional as F
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 
 
+def tokenize(text: str):
+    """Compatibility tokenizer used by persisted TF-IDF vectorizers."""
+    if not isinstance(text, str):
+        return []
+    return TOKEN_RE.findall(text.lower())
+
+
 class WordGCNPool(nn.Module):
     """Inference-only copy of the TextGCN architecture used in training."""
 
