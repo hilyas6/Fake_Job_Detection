@@ -5,10 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-try:
-    import joblib
-except ModuleNotFoundError:  # pragma: no cover - helpful runtime fallback
-    joblib = None
+import joblib
 import numpy as np
 import pandas as pd
 import torch
@@ -16,14 +13,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
-
-
-def _require_joblib():
-    if joblib is None:
-        raise ModuleNotFoundError(
-            "joblib is required to load TextGCN artifacts. "
-            "Install dependencies with: pip install -r requirements.txt joblib"
-        )
 
 
 class WordGCNPool(nn.Module):
@@ -91,7 +80,6 @@ class TextGCNExplainer:
         self.model_dir = Path(model_dir)
         self.device = torch.device(device)
 
-        _require_joblib()
         self.vectorizer = joblib.load(self.model_dir / "vectorizer.joblib")
         graph_cache = torch.load(self.model_dir / "graph_cache.pt", map_location="cpu")
         ckpt = torch.load(self.model_dir / "textgcn.pt", map_location="cpu")
