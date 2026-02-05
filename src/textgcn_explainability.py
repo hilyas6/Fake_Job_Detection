@@ -88,8 +88,16 @@ class TextGCNExplainer:
         self.device = torch.device(device)
 
         self.vectorizer = joblib.load(self.model_dir / "vectorizer.joblib")
-        graph_cache = torch.load(self.model_dir / "graph_cache.pt", map_location="cpu")
-        ckpt = torch.load(self.model_dir / "textgcn.pt", map_location="cpu")
+        graph_cache = torch.load(
+            self.model_dir / "graph_cache.pt",
+            map_location="cpu",
+            weights_only=False,
+        )
+        ckpt = torch.load(
+            self.model_dir / "textgcn.pt",
+            map_location="cpu",
+            weights_only=False,
+        )
 
         self.inv_vocab = graph_cache["inv_vocab"]
         self.vocab = {token: int(idx) for idx, token in self.inv_vocab.items()}
