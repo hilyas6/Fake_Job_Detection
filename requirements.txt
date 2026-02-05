@@ -5,3 +5,4 @@ nltk
 torch
 torch-geometric
 matplotlib
+joblib
