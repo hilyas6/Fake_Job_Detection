@@ -157,7 +157,7 @@ class TextGCNExplainer:
 
         deltas: List[Tuple[str, float]] = []
         for token in self._unique_known_unigrams(text):
-            masked = re.sub(rf"\\b{re.escape(token)}\\b", " ", text, flags=re.IGNORECASE)
+            masked = re.sub(rf"\b{re.escape(token)}\b", " ", text, flags=re.IGNORECASE)
             masked_probs = self.predict_proba(masked)
             impact = fake_prob - float(masked_probs[1])
             deltas.append((token, impact))
