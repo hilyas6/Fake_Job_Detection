@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import itertools
 import math
+import random
 
 import joblib
 import numpy as np
@@ -19,7 +21,16 @@ from src.train_textgcn_enhanced import (
 )
 
 
+def set_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 def run_trial(cfg, device, train_df, val_df, test_df, ob_df):
+    set_seed(cfg["seed"])
     vec = TfidfVectorizer(
         tokenizer=tokenize,
         preprocessor=None,
@@ -39,7 +50,7 @@ def run_trial(cfg, device, train_df, val_df, test_df, ob_df):
         [tokenize(t) for t in train_df["text"].tolist()],
         vec.vocabulary_,
         window_size=cfg["window_size"],
-        pmi_threshold=0.0,
+        pmi_threshold=cfg["pmi_threshold"],
     )
     A_norm = normalize_sparse_adj(rows, cols, vals, n).to(device)
     X_train = scipy_to_torch_sparse(X_train_s).to(device)
@@ -55,32 +66,51 @@ def run_trial(cfg, device, train_df, val_df, test_df, ob_df):
     neg = int((y_train == 0).sum().item())
     class_weights = torch.tensor([1.0, math.sqrt(neg / max(pos, 1))], dtype=torch.float32, device=device)
 
-    model = ImprovedWordGCN(n, hidden_dim=cfg["hidden_dim"], dropout=cfg["dropout"], residual_alpha=0.7).to(device)
-    opt = torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=1e-5)
+    model = ImprovedWordGCN(
+        n,
+        hidden_dim=cfg["hidden_dim"],
+        dropout=cfg["dropout"],
+        residual_alpha=cfg["residual_alpha"],
+    ).to(device)
+    opt = torch.optim.Adam(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        opt,
+        mode="max",
+        factor=0.5,
+        patience=max(2, cfg["patience"] // 3),
+        min_lr=5e-5,
+    )
 
     best_state = None
-    best_f1 = -1.0
-    patience = 3
+    best_val = {"f1": -1.0}
+    patience = cfg["patience"]
     for _ in range(cfg["epochs"]):
         model.train()
         opt.zero_grad()
         logits = model(A_norm, X_train)
-        loss = F.cross_entropy(logits, y_train, weight=class_weights, label_smoothing=0.05)
+        loss = F.cross_entropy(logits, y_train, weight=class_weights, label_smoothing=cfg["label_smoothing"])
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
         opt.step()
 
         model.eval()
         with torch.no_grad():
             val_probs = F.softmax(model(A_norm, X_val), dim=1)[:, 1].cpu().numpy()
-        val_f1 = eval_at_threshold(y_val, val_probs, 0.5)["f1"]
-        if val_f1 > best_f1:
-            best_f1 = val_f1
+
+        val = find_best_threshold(y_val, val_probs)
+        scheduler.step(val["f1"])
+
+        if val["f1"] > best_val["f1"] + 1e-6:
+            best_val = val
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
-            patience = 3
+            patience = cfg["patience"]
         else:
             patience -= 1
             if patience <= 0:
                 break
+
+    if best_state is None:
+        best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
 
     model.load_state_dict(best_state)
     with torch.no_grad():
@@ -106,16 +136,43 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     bundle = load_bundle()
 
+    common = {
+        "weight_decay": 1e-5,
+        "patience": 18,
+        "epochs": 140,
+        "label_smoothing": 0.05,
+        "pmi_threshold": 0.0,
+        "max_features": 40000,
+    }
+    grid = itertools.product(
+        [41, 42],  # seed
+        [(1, 2), (1, 3)],  # ngram_range
+        [20],  # window_size
+        [300],  # hidden_dim
+        [0.3, 0.35],  # dropout
+        [2e-3, 3e-3],  # lr
+        [0.7],  # residual_alpha
+    )
     trials = [
-        {"ngram_range": (1, 2), "max_features": 40000, "window_size": 20, "hidden_dim": 256, "dropout": 0.35, "lr": 3e-3, "epochs": 40},
-        {"ngram_range": (1, 3), "max_features": 50000, "window_size": 22, "hidden_dim": 300, "dropout": 0.3, "lr": 2e-3, "epochs": 50},
+        {
+            **common,
+            "seed": seed,
+            "ngram_range": ngram,
+            "window_size": window,
+            "hidden_dim": hidden,
+            "dropout": dropout,
+            "lr": lr,
+            "residual_alpha": residual_alpha,
+        }
+        for seed, ngram, window, hidden, dropout, lr, residual_alpha in grid
     ]
 
     best = None
     best_f1 = -1.0
-    for cfg in trials:
+    for idx, cfg in enumerate(trials, start=1):
         out = run_trial(cfg, device, bundle.train_df, bundle.val_df, bundle.test_df, bundle.openbay_df)
         val = find_best_threshold(out["y_val"], out["val_probs"])
+        print(f"[{idx}/{len(trials)}] val_f1={val['f1']:.4f} thr={val['threshold']:.2f} cfg={cfg}")
         if val["f1"] > best_f1:
             best_f1 = val["f1"]
             best = {**out, "val_best": val}
@@ -136,6 +193,7 @@ def main() -> None:
             **openbay_metrics(best["ob_probs"], threshold),
         },
     )
+    print(f"Best val_f1={best_f1:.4f} | threshold={threshold:.2f} | config={best['config']}")
 
 
 if __name__ == "__main__":
