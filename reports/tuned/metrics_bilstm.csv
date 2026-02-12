@@ -1,0 +1,2 @@
+model,emscad_test_f1,emscad_test_precision,emscad_test_recall,threshold,openbay_recall,openbay_mean_prob,openbay_median_prob
+bilstm,0.7418181818181818,0.7727272727272727,0.7132867132867133,0.82,0.3216,0.4327157735824585,0.2672865390777588

@@ -1,0 +1,2 @@
+model,emscad_test_f1,emscad_test_precision,emscad_test_recall,threshold,openbay_recall,openbay_mean_prob,openbay_median_prob
+logistic_regression,0.7692307692307693,0.8076923076923077,0.7342657342657343,0.8,1.0,0.9781072134988841,0.9796703572606023
