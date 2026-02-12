@@ -66,23 +66,11 @@ def run_trial(cfg, device, train_df, val_df, test_df, ob_df):
     neg = int((y_train == 0).sum().item())
     class_weights = torch.tensor([1.0, math.sqrt(neg / max(pos, 1))], dtype=torch.float32, device=device)
 
-    model = ImprovedWordGCN(
-        n,
-        hidden_dim=cfg["hidden_dim"],
-        dropout=cfg["dropout"],
-        residual_alpha=cfg["residual_alpha"],
-    ).to(device)
+    model = ImprovedWordGCN(n, hidden_dim=cfg["hidden_dim"], dropout=cfg["dropout"], residual_alpha=0.7).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        opt,
-        mode="max",
-        factor=0.5,
-        patience=max(2, cfg["patience"] // 3),
-        min_lr=5e-5,
-    )
 
     best_state = None
-    best_val = {"f1": -1.0}
+    best_f1 = -1.0
     patience = cfg["patience"]
     for _ in range(cfg["epochs"]):
         model.train()
@@ -136,35 +124,38 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     bundle = load_bundle()
 
-    common = {
-        "weight_decay": 1e-5,
-        "patience": 18,
-        "epochs": 140,
-        "label_smoothing": 0.05,
-        "pmi_threshold": 0.0,
-        "max_features": 40000,
-    }
-    grid = itertools.product(
-        [41, 42],  # seed
-        [(1, 2), (1, 3)],  # ngram_range
-        [20],  # window_size
-        [300],  # hidden_dim
-        [0.3, 0.35],  # dropout
-        [2e-3, 3e-3],  # lr
-        [0.7],  # residual_alpha
-    )
+    common = {"weight_decay": 1e-5, "patience": 12, "seed": 42}
     trials = [
         {
             **common,
-            "seed": seed,
-            "ngram_range": ngram,
-            "window_size": window,
-            "hidden_dim": hidden,
-            "dropout": dropout,
-            "lr": lr,
-            "residual_alpha": residual_alpha,
-        }
-        for seed, ngram, window, hidden, dropout, lr, residual_alpha in grid
+            "ngram_range": (1, 2),
+            "max_features": 40000,
+            "window_size": 20,
+            "hidden_dim": 256,
+            "dropout": 0.35,
+            "lr": 3e-3,
+            "epochs": 80,
+        },
+        {
+            **common,
+            "ngram_range": (1, 3),
+            "max_features": 40000,
+            "window_size": 20,
+            "hidden_dim": 300,
+            "dropout": 0.35,
+            "lr": 3e-3,
+            "epochs": 100,
+        },
+        {
+            **common,
+            "ngram_range": (1, 3),
+            "max_features": 50000,
+            "window_size": 22,
+            "hidden_dim": 320,
+            "dropout": 0.3,
+            "lr": 2e-3,
+            "epochs": 120,
+        },
     ]
 
     best = None
