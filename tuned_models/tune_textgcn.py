@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import random
 
 import joblib
 import numpy as np
@@ -19,7 +20,16 @@ from src.train_textgcn_enhanced import (
 )
 
 
+def set_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 def run_trial(cfg, device, train_df, val_df, test_df, ob_df):
+    set_seed(cfg["seed"])
     vec = TfidfVectorizer(
         tokenizer=tokenize,
         preprocessor=None,
@@ -56,11 +66,11 @@ def run_trial(cfg, device, train_df, val_df, test_df, ob_df):
     class_weights = torch.tensor([1.0, math.sqrt(neg / max(pos, 1))], dtype=torch.float32, device=device)
 
     model = ImprovedWordGCN(n, hidden_dim=cfg["hidden_dim"], dropout=cfg["dropout"], residual_alpha=0.7).to(device)
-    opt = torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=1e-5)
+    opt = torch.optim.Adam(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
 
     best_state = None
     best_f1 = -1.0
-    patience = 3
+    patience = cfg["patience"]
     for _ in range(cfg["epochs"]):
         model.train()
         opt.zero_grad()
@@ -76,11 +86,14 @@ def run_trial(cfg, device, train_df, val_df, test_df, ob_df):
         if val_f1 > best_f1:
             best_f1 = val_f1
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
-            patience = 3
+            patience = cfg["patience"]
         else:
             patience -= 1
             if patience <= 0:
                 break
+
+    if best_state is None:
+        best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
 
     model.load_state_dict(best_state)
     with torch.no_grad():
@@ -106,9 +119,38 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     bundle = load_bundle()
 
+    common = {"weight_decay": 1e-5, "patience": 12, "seed": 42}
     trials = [
-        {"ngram_range": (1, 2), "max_features": 40000, "window_size": 20, "hidden_dim": 256, "dropout": 0.35, "lr": 3e-3, "epochs": 40},
-        {"ngram_range": (1, 3), "max_features": 50000, "window_size": 22, "hidden_dim": 300, "dropout": 0.3, "lr": 2e-3, "epochs": 50},
+        {
+            **common,
+            "ngram_range": (1, 2),
+            "max_features": 40000,
+            "window_size": 20,
+            "hidden_dim": 256,
+            "dropout": 0.35,
+            "lr": 3e-3,
+            "epochs": 80,
+        },
+        {
+            **common,
+            "ngram_range": (1, 3),
+            "max_features": 40000,
+            "window_size": 20,
+            "hidden_dim": 300,
+            "dropout": 0.35,
+            "lr": 3e-3,
+            "epochs": 100,
+        },
+        {
+            **common,
+            "ngram_range": (1, 3),
+            "max_features": 50000,
+            "window_size": 22,
+            "hidden_dim": 320,
+            "dropout": 0.3,
+            "lr": 2e-3,
+            "epochs": 120,
+        },
     ]
 
     best = None
