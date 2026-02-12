@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import math
 import random
 
@@ -49,7 +50,7 @@ def run_trial(cfg, device, train_df, val_df, test_df, ob_df):
         [tokenize(t) for t in train_df["text"].tolist()],
         vec.vocabulary_,
         window_size=cfg["window_size"],
-        pmi_threshold=0.0,
+        pmi_threshold=cfg["pmi_threshold"],
     )
     A_norm = normalize_sparse_adj(rows, cols, vals, n).to(device)
     X_train = scipy_to_torch_sparse(X_train_s).to(device)
@@ -75,16 +76,20 @@ def run_trial(cfg, device, train_df, val_df, test_df, ob_df):
         model.train()
         opt.zero_grad()
         logits = model(A_norm, X_train)
-        loss = F.cross_entropy(logits, y_train, weight=class_weights, label_smoothing=0.05)
+        loss = F.cross_entropy(logits, y_train, weight=class_weights, label_smoothing=cfg["label_smoothing"])
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
         opt.step()
 
         model.eval()
         with torch.no_grad():
             val_probs = F.softmax(model(A_norm, X_val), dim=1)[:, 1].cpu().numpy()
-        val_f1 = eval_at_threshold(y_val, val_probs, 0.5)["f1"]
-        if val_f1 > best_f1:
-            best_f1 = val_f1
+
+        val = find_best_threshold(y_val, val_probs)
+        scheduler.step(val["f1"])
+
+        if val["f1"] > best_val["f1"] + 1e-6:
+            best_val = val
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
             patience = cfg["patience"]
         else:
@@ -155,9 +160,10 @@ def main() -> None:
 
     best = None
     best_f1 = -1.0
-    for cfg in trials:
+    for idx, cfg in enumerate(trials, start=1):
         out = run_trial(cfg, device, bundle.train_df, bundle.val_df, bundle.test_df, bundle.openbay_df)
         val = find_best_threshold(out["y_val"], out["val_probs"])
+        print(f"[{idx}/{len(trials)}] val_f1={val['f1']:.4f} thr={val['threshold']:.2f} cfg={cfg}")
         if val["f1"] > best_f1:
             best_f1 = val["f1"]
             best = {**out, "val_best": val}
@@ -178,6 +184,7 @@ def main() -> None:
             **openbay_metrics(best["ob_probs"], threshold),
         },
     )
+    print(f"Best val_f1={best_f1:.4f} | threshold={threshold:.2f} | config={best['config']}")
 
 
 if __name__ == "__main__":
