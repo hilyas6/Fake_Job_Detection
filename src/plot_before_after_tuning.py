@@ -95,8 +95,7 @@ def plot_before_after_comparison(df: pd.DataFrame, out_path: Path) -> None:
         ax.barh(y + bar_height / 2, after_scores, height=bar_height, label="After tuning", color="#1abc9c")
 
         ax.set_title(METRIC_LABELS[metric_col], fontweight="bold")
-        # Keep full range visible so low baseline scores (e.g., Naive Bayes before tuning) are not clipped.
-        ax.set_xlim(0.0, 1.0)
+        ax.set_xlim(0.5, 1.0)
         ax.set_xlabel("Score")
         ax.set_yticks(y)
         ax.set_yticklabels(models)
