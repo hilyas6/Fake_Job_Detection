@@ -3,18 +3,17 @@ from __future__ import annotations
 import subprocess
 import sys
 
-
-SCRIPTS = [
-    "tuned_models/tune_classical_models.py",
-    "tuned_models/tune_bilstm.py",
-    "tuned_models/tune_distilbert.py",
-    "tuned_models/tune_textgcn.py",
+MODULES = [
+    "tuned_models.tune_classical_models",
+    "tuned_models.tune_bilstm",
+    "tuned_models.tune_distilbert",
+    "tuned_models.tune_textgcn",
 ]
 
 
 def main() -> None:
-    for script in SCRIPTS:
-        cmd = [sys.executable, script]
+    for mod in MODULES:
+        cmd = [sys.executable, "-m", mod]
         print("\n>>", " ".join(cmd))
         subprocess.check_call(cmd)
 
