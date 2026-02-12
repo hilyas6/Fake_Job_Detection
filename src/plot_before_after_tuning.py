@@ -80,6 +80,9 @@ def plot_before_after_comparison(df: pd.DataFrame, out_path: Path) -> None:
     models = list(df["model"].cat.categories)
     y = np.arange(len(models))
     bar_height = 0.36
+    all_scores = df[METRICS].to_numpy().flatten()
+    x_min = max(0.0, float(np.nanmin(all_scores)) - 0.05)
+    x_max = min(1.0, float(np.nanmax(all_scores)) + 0.02)
 
     fig, axes = plt.subplots(1, 3, figsize=(20, 7), sharey=True)
 
@@ -95,7 +98,7 @@ def plot_before_after_comparison(df: pd.DataFrame, out_path: Path) -> None:
         ax.barh(y + bar_height / 2, after_scores, height=bar_height, label="After tuning", color="#1abc9c")
 
         ax.set_title(METRIC_LABELS[metric_col], fontweight="bold")
-        ax.set_xlim(0.5, 1.0)
+        ax.set_xlim(x_min, x_max)
         ax.set_xlabel("Score")
         ax.set_yticks(y)
         ax.set_yticklabels(models)
