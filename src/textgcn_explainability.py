@@ -15,6 +15,24 @@ import torch.nn.functional as F
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 
 
+def _is_git_lfs_pointer(path: Path) -> bool:
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            first_line = f.readline().strip()
+        return first_line.startswith("version https://git-lfs.github.com/spec/v1")
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+def _load_joblib_or_raise(path: Path):
+    if _is_git_lfs_pointer(path):
+        raise RuntimeError(
+            f"Model artifact {path} is a Git LFS pointer, not the real file. "
+            "Run `git lfs pull` to download model artifacts, then retry."
+        )
+    return joblib.load(path)
+
+
 def tokenize(text: str):
     """Compatibility tokenizer used by persisted TF-IDF vectorizers."""
     if not isinstance(text, str):
@@ -87,7 +105,7 @@ class TextGCNExplainer:
         self.model_dir = Path(model_dir)
         self.device = torch.device(device)
 
-        self.vectorizer = joblib.load(self.model_dir / "vectorizer.joblib")
+        self.vectorizer = _load_joblib_or_raise(self.model_dir / "vectorizer.joblib")
         graph_cache = torch.load(
             self.model_dir / "graph_cache.pt",
             map_location="cpu",
@@ -193,11 +211,36 @@ def run_demo(explainer: TextGCNExplainer, top_k: int, n_samples: int):
         print(json.dumps(result.__dict__, indent=2))
 
 
+def run_interactive(explainer: TextGCNExplainer, top_k: int):
+    print("Interactive TextGCN explainability mode")
+    print("Paste a job posting (single line) and press enter.")
+    print("Type 'exit' or 'quit' to finish.\n")
+
+    while True:
+        try:
+            text = input("job-post> ").strip()
+        except EOFError:
+            print("\nInput stream closed. Exiting interactive mode.")
+            break
+
+        if not text:
+            continue
+
+        if text.lower() in {"exit", "quit"}:
+            print("Exiting interactive mode.")
+            break
+
+        result = explainer.explain_text(text, top_k=top_k)
+        print(json.dumps(result.__dict__, indent=2))
+        print()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Explain TextGCN predictions with token-occlusion.")
     parser.add_argument("--text", type=str, default=None, help="Single job-post text to explain.")
     parser.add_argument("--top-k", type=int, default=10, help="Number of top words to show.")
     parser.add_argument("--demo-samples", type=int, default=0, help="Run explanations on random EMSCAD samples.")
+    parser.add_argument("--interactive", action="store_true", help="Launch prompt for repeated custom inputs.")
     parser.add_argument("--model-dir", type=Path, default=Path("models/textgcn"))
     parser.add_argument("--metrics-path", type=Path, default=Path("reports/metrics_textgcn.csv"))
     parser.add_argument("--device", type=str, default="cpu")
@@ -216,8 +259,11 @@ def main():
     if args.demo_samples > 0:
         run_demo(explainer, top_k=args.top_k, n_samples=args.demo_samples)
 
-    if not args.text and args.demo_samples <= 0:
-        parser.error("Provide --text for one explanation or --demo-samples for dataset examples.")
+    if args.interactive:
+        run_interactive(explainer, top_k=args.top_k)
+
+    if not args.text and args.demo_samples <= 0 and not args.interactive:
+        parser.error("Provide --text, --demo-samples, or --interactive.")
 
 
 if __name__ == "__main__":
