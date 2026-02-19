@@ -20,31 +20,6 @@ except Exception:  # pragma: no cover - optional dependency handling
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 
-FAKE_SIGNAL_HINTS = {
-    "urgent": "Urgency language can pressure applicants into acting quickly without verification.",
-    "immediate": "Immediate-start claims are frequently used in scam-style outreach.",
-    "bonus": "Overemphasized bonus language can indicate incentive baiting.",
-    "whatsapp": "Off-platform messaging channels are often used to avoid traceable hiring workflows.",
-    "telegram": "Off-platform messaging channels are often used to avoid traceable hiring workflows.",
-    "gmail": "Generic email domains can appear in low-trust recruiter identities.",
-    "yahoo": "Generic email domains can appear in low-trust recruiter identities.",
-    "hotmail": "Generic email domains can appear in low-trust recruiter identities.",
-    "weekly": "Fast high-frequency pay phrasing can be associated with unrealistic compensation claims.",
-    "remote": "Remote-only wording is neutral by itself but can become suspicious when combined with minimal requirements.",
-}
-
-REAL_SIGNAL_HINTS = {
-    "experience": "Specific experience requirements are commonly seen in legitimate role descriptions.",
-    "degree": "Structured education requirements usually indicate formal hiring criteria.",
-    "responsibilities": "Clear role responsibilities often reflect mature, detailed job descriptions.",
-    "compliance": "Compliance-related wording can indicate established HR or legal processes.",
-    "benefits": "Concrete benefits sections are common in legitimate job postings.",
-    "salary": "Transparent salary details can indicate stronger posting quality.",
-    "portfolio": "Portfolio requirements are often tied to real skills screening.",
-    "interview": "Standard interview process terms can support legitimacy.",
-    "contract": "Formal employment terms can indicate structured hiring practices.",
-}
-
 
 class ImprovedWordGCN(nn.Module):
     """Inference architecture for the improved TextGCN model."""
@@ -270,33 +245,13 @@ class ImprovedTextGCNService:
             else:
                 impact_strength = "moderate"
 
-            repetition_note = (
-                f"It appears {occurrence_count} times, which reinforces its contribution."
-                if occurrence_count > 1
-                else "It appears once, so the model treats the single mention as highly informative."
-            )
-
-            if delta > 0:
-                semantic_hint = FAKE_SIGNAL_HINTS.get(
-                    token,
-                    "This token aligns with language patterns that previously co-occurred with fake-job labels in training data.",
-                )
-                direction = "pushes prediction toward FAKE"
-            else:
-                semantic_hint = REAL_SIGNAL_HINTS.get(
-                    token,
-                    "This token aligns with language patterns that previously co-occurred with real-job labels in training data.",
-                )
-                direction = "pushes prediction toward REAL"
-
             return {
                 "word": token,
                 "impact_on_fake_probability": float(delta),
+                "absolute_impact": float(abs_delta),
                 "normalized_impact": float(delta / max_abs),
                 "occurrences": float(occurrence_count),
-                "impact_direction": direction,
-                "why_high_impact": f"{impact_strength.capitalize()} SHAP magnitude ({abs_delta:.4f}). {repetition_note}",
-                "possible_meaning": semantic_hint,
+                "impact_strength": impact_strength,
             }
 
         influential = sorted((d for d in deltas if d[1] > 0), key=lambda x: x[1], reverse=True)[:top_k]
