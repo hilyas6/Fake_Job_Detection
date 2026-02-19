@@ -52,7 +52,10 @@ def shap_for_single_text(service: ImprovedTextGCNService, text: str):
     if len(background) < 2:
         return None, "Not enough background samples to compute SHAP explanation."
 
-    masker = shap.maskers.Text(service.vectorizer.build_tokenizer())
+    # Use a regex tokenizer for compatibility across SHAP versions.
+    # Passing the sklearn tokenizer callable directly can fail because some
+    # SHAP versions expect a HuggingFace-like tokenizer returning a dict.
+    masker = shap.maskers.Text(r"\W+")
 
     def fake_probability(text_batch):
         probs = service.predict_proba_batch(list(text_batch))
@@ -126,7 +129,11 @@ if run_btn:
             "SHAP highlights decisive predictive traits at token granularity, "
             "which can strengthen transparency and user confidence during screening."
         )
-        shap_html = shap.plots.text(shap_values[:, :, "fake_probability"][0], display=False)
+        try:
+            shap_payload = shap_values[:, :, "fake_probability"][0]
+        except Exception:
+            shap_payload = shap_values[0]
+        shap_html = shap.plots.text(shap_payload, display=False)
         st.components.v1.html(shap_html, height=320, scrolling=True)
 
 st.markdown("---")
