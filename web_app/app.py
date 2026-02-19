@@ -14,23 +14,37 @@ st.markdown(
     """
     <style>
         .shap-panel {
-            border: 1px solid rgba(49, 51, 63, 0.2);
+            border: 1px solid rgba(49, 51, 63, 0.15);
             border-radius: 0.75rem;
             padding: 0.75rem;
-            background: rgba(250, 250, 250, 0.5);
+            background: rgba(250, 250, 250, 0.55);
             margin-top: 0.25rem;
         }
-        .shap-wrapper {
-            background: #111827;
+        .shap-summary-card {
+            border: 1px solid rgba(49, 51, 63, 0.15);
             border-radius: 0.75rem;
-            padding: 0.5rem;
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 0.8rem 0.9rem;
+            background: rgba(255, 255, 255, 0.7);
         }
-        .shap-wrapper * {
-            color: #ffffff !important;
+        .shap-summary-card h4 {
+            margin: 0 0 0.35rem 0;
+            font-size: 0.98rem;
+        }
+        .shap-summary-card p {
+            margin: 0;
+            color: rgba(49, 51, 63, 0.9);
+            font-size: 0.9rem;
+        }
+        .shap-wrapper {
+            background: #ffffff;
+            border-radius: 0.75rem;
+            padding: 0.65rem;
+            border: 1px solid rgba(49, 51, 63, 0.15);
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
         }
         .shap-wrapper div {
-            line-height: 1.4 !important;
+            line-height: 1.35 !important;
+            font-size: 13px !important;
         }
     </style>
     """,
@@ -137,19 +151,12 @@ if run_btn:
         with height_col:
             shap_height = st.slider("SHAP panel height", min_value=380, max_value=1200, value=760, step=20)
 
-        st.write(
-            "SHAP highlights decisive predictive traits at token granularity, "
-            "which can strengthen transparency and user confidence during screening."
-        )
-
-        st.markdown(
-            """
+        st.markdown("""
             <div class="shap-panel">
-            Tip: Scroll inside the panel to inspect the full explanation, or increase panel height for long postings.
+            SHAP highlights which words moved this prediction the most. Positive values increase <b>fake</b> probability,
+            negative values decrease it.
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
+            """, unsafe_allow_html=True)
 
         shap_html_raw = shap.plots.text(shap_payload, display=False)
         shap_html = f"""
@@ -169,7 +176,44 @@ if run_btn:
         with placeholder:
             components.html(shap_html, height=shap_height, scrolling=True)
 
-        st.markdown("#### Why these high-impact words matter")
+        st.markdown("#### Quick interpretation summary")
+        summary_left, summary_right = st.columns(2)
+        with summary_left:
+            if result.influential_words:
+                top_fake = result.influential_words[0]
+                st.markdown(
+                    f"""
+                    <div class="shap-summary-card">
+                        <h4>Top FAKE-driving token: <code>{top_fake['word']}</code></h4>
+                        <p>
+                            Impact on fake probability: <b>+{top_fake['impact_on_fake_probability']:.4f}</b><br/>
+                            Frequency in text: <b>{int(top_fake['occurrences'])}</b>
+                        </p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.info("No strong FAKE-driving tokens were detected.")
+
+        with summary_right:
+            if result.protective_words:
+                top_real = result.protective_words[0]
+                st.markdown(
+                    f"""
+                    <div class="shap-summary-card">
+                        <h4>Top REAL-driving token: <code>{top_real['word']}</code></h4>
+                        <p>
+                            Impact on fake probability: <b>{top_real['impact_on_fake_probability']:.4f}</b><br/>
+                            Frequency in text: <b>{int(top_real['occurrences'])}</b>
+                        </p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.info("No strong REAL-driving tokens were detected.")
+
         detail_frames = []
         if result.influential_words:
             fake_df = pd.DataFrame(result.influential_words).copy()
@@ -182,16 +226,27 @@ if run_btn:
 
         if detail_frames:
             detail_df = pd.concat(detail_frames, ignore_index=True)
-            detail_df = detail_df[[
-                "signal",
-                "word",
-                "impact_direction",
-                "impact_on_fake_probability",
-                "occurrences",
-                "why_high_impact",
-                "possible_meaning",
-            ]]
-            st.dataframe(detail_df, use_container_width=True, hide_index=True)
+            detail_df = detail_df[["signal", "word", "impact_on_fake_probability", "absolute_impact", "impact_strength", "occurrences"]]
+            detail_df = detail_df.rename(
+                columns={
+                    "signal": "Signal",
+                    "word": "Token",
+                    "impact_on_fake_probability": "Impact on Fake Probability",
+                    "absolute_impact": "Absolute Impact",
+                    "impact_strength": "Impact Level",
+                    "occurrences": "Occurrences",
+                }
+            )
+            st.dataframe(
+                detail_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Impact on Fake Probability": st.column_config.NumberColumn(format="%.4f"),
+                    "Absolute Impact": st.column_config.NumberColumn(format="%.4f"),
+                    "Occurrences": st.column_config.NumberColumn(format="%d"),
+                },
+            )
         else:
             st.info("No token-level SHAP details were available for interpretation.")
 
