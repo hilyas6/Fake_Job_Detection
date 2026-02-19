@@ -2,16 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import streamlit as st
 
 from model_runtime import ImprovedTextGCNService
-
-try:
-    import shap
-except Exception:  # pragma: no cover - optional dependency handling
-    shap = None
 
 st.set_page_config(page_title="Explainable Fake Job Detector", page_icon="🧠", layout="wide")
 
@@ -30,40 +24,11 @@ def load_service() -> ImprovedTextGCNService:
     )
 
 
-@st.cache_data(show_spinner=False)
-def load_background_examples(limit: int = 40) -> list[str]:
-    data_path = Path("data/raw/fake_job_postings.csv")
-    if not data_path.exists():
-        return [
-            "Remote data analyst position with clear salary and benefits package.",
-            "Urgent hiring, no interview needed, wire transfer requested before onboarding.",
-        ]
-    df = pd.read_csv(data_path)
-    text_col = "description" if "description" in df.columns else df.columns[-1]
-    texts = df[text_col].fillna("").astype(str).head(limit).tolist()
-    return [t for t in texts if t.strip()]
 
-
-def shap_for_single_text(service: ImprovedTextGCNService, text: str):
-    if shap is None:
-        return None, "SHAP is not installed in the environment."
-
-    background = load_background_examples(limit=30)
-    if len(background) < 2:
-        return None, "Not enough background samples to compute SHAP explanation."
-
-    # Use a regex tokenizer for compatibility across SHAP versions.
-    # Passing the sklearn tokenizer callable directly can fail because some
-    # SHAP versions expect a HuggingFace-like tokenizer returning a dict.
-    masker = shap.maskers.Text(r"\W+")
-
-    def fake_probability(text_batch):
-        probs = service.predict_proba_batch(list(text_batch))
-        return probs[:, 1]
-
-    explainer = shap.Explainer(fake_probability, masker, output_names=["fake_probability"])
-    values = explainer([text])
-    return values, None
+try:
+    import shap
+except Exception:  # pragma: no cover - optional dependency handling
+    shap = None
 
 
 try:
@@ -121,18 +86,22 @@ if run_btn:
             st.info("No strong real-leaning token signal was identified for this text.")
 
     st.subheader("SHAP-based Explainability")
-    shap_values, shap_error = shap_for_single_text(service, job_text)
-    if shap_error:
-        st.warning(shap_error)
+    if shap is None:
+        st.warning("SHAP is not installed in the environment.")
+    elif result.shap_error:
+        st.warning(result.shap_error)
+    elif result.shap_values is None:
+        st.warning("SHAP output was not available for this sample.")
     else:
-        st.write(
-            "SHAP highlights decisive predictive traits at token granularity, "
-            "which can strengthen transparency and user confidence during screening."
-        )
+        shap_values = result.shap_values
         try:
             shap_payload = shap_values[:, :, "fake_probability"][0]
         except Exception:
             shap_payload = shap_values[0]
+        st.write(
+            "SHAP highlights decisive predictive traits at token granularity, "
+            "which can strengthen transparency and user confidence during screening."
+        )
         shap_html = shap.plots.text(shap_payload, display=False)
         st.components.v1.html(shap_html, height=320, scrolling=True)
 
