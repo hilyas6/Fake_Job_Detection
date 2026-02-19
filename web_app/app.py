@@ -53,8 +53,7 @@ st.markdown(
 
 st.title("🧠 Explainable Fake Job Detection Web App")
 st.caption(
-    "This Streamlit interface serves the improved TextGCN classifier and keeps the interpretation flow visible, "
-    "so users can inspect why a job post appears fake or real, with slight phrasing redundancies intentionally retained."
+    "Classify a job post and review a clear explanation of why the model predicts FAKE or REAL."
 )
 
 
@@ -127,7 +126,7 @@ if run_btn:
         else:
             st.info("No strong real-leaning token signal was identified for this text.")
 
-    st.subheader("SHAP-based Explainability")
+    st.subheader("SHAP Explainability")
     if shap is None:
         st.warning("SHAP is not installed in the environment.")
     elif result.shap_error:
@@ -151,12 +150,17 @@ if run_btn:
         with height_col:
             shap_height = st.slider("SHAP panel height", min_value=380, max_value=1200, value=760, step=20)
 
-        st.markdown("""
+        st.markdown(
+            """
             <div class="shap-panel">
-            SHAP highlights which words moved this prediction the most. Positive values increase <b>fake</b> probability,
-            negative values decrease it.
+                <b>How to read this view</b><br/>
+                • Red tokens push the prediction toward <b>FAKE</b>.<br/>
+                • Blue tokens push the prediction toward <b>REAL</b>.<br/>
+                • Stronger color means a larger impact.
             </div>
-            """, unsafe_allow_html=True)
+            """,
+            unsafe_allow_html=True,
+        )
 
         shap_html_raw = shap.plots.text(shap_payload, display=False)
         shap_html = f"""
@@ -170,13 +174,13 @@ if run_btn:
                 placeholder = st.empty()
             with right_col:
                 st.info(
-                    "Use the controls above to resize the SHAP section for complete token-level visibility."
+                    "Use the controls above to adjust the SHAP panel size for better readability."
                 )
 
         with placeholder:
             components.html(shap_html, height=shap_height, scrolling=True)
 
-        st.markdown("#### Quick interpretation summary")
+        st.markdown("#### Key token summary")
         summary_left, summary_right = st.columns(2)
         with summary_left:
             if result.influential_words:
@@ -252,5 +256,5 @@ if run_btn:
 
 st.markdown("---")
 st.caption(
-    "Built with Streamlit for dynamic inspection of fake/real predictions, with explainability pathways retained for practical interpretive clarity."
+    "Built with Streamlit for practical fake-job detection and readable model explanations."
 )
