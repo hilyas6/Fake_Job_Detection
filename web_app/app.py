@@ -20,6 +20,18 @@ st.markdown(
             background: rgba(250, 250, 250, 0.5);
             margin-top: 0.25rem;
         }
+        .shap-wrapper {
+            background: #111827;
+            border-radius: 0.75rem;
+            padding: 0.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .shap-wrapper * {
+            color: #ffffff !important;
+        }
+        .shap-wrapper div {
+            line-height: 1.4 !important;
+        }
     </style>
     """,
     unsafe_allow_html=True,
@@ -139,7 +151,10 @@ if run_btn:
             unsafe_allow_html=True,
         )
 
-        shap_html = shap.plots.text(shap_payload, display=False)
+        shap_html_raw = shap.plots.text(shap_payload, display=False)
+        shap_html = f"""
+        <div class=\"shap-wrapper\">{shap_html_raw}</div>
+        """
         if full_width_view:
             placeholder = st.empty()
         else:
@@ -153,6 +168,32 @@ if run_btn:
 
         with placeholder:
             components.html(shap_html, height=shap_height, scrolling=True)
+
+        st.markdown("#### Why these high-impact words matter")
+        detail_frames = []
+        if result.influential_words:
+            fake_df = pd.DataFrame(result.influential_words).copy()
+            fake_df.insert(0, "signal", "FAKE")
+            detail_frames.append(fake_df)
+        if result.protective_words:
+            real_df = pd.DataFrame(result.protective_words).copy()
+            real_df.insert(0, "signal", "REAL")
+            detail_frames.append(real_df)
+
+        if detail_frames:
+            detail_df = pd.concat(detail_frames, ignore_index=True)
+            detail_df = detail_df[[
+                "signal",
+                "word",
+                "impact_direction",
+                "impact_on_fake_probability",
+                "occurrences",
+                "why_high_impact",
+                "possible_meaning",
+            ]]
+            st.dataframe(detail_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No token-level SHAP details were available for interpretation.")
 
 st.markdown("---")
 st.caption(
