@@ -9,6 +9,21 @@ from model_runtime import ImprovedTextGCNService
 
 st.set_page_config(page_title="Explainable Fake Job Detector", page_icon="🧠", layout="wide")
 
+st.markdown(
+    """
+    <style>
+        .shap-panel {
+            border: 1px solid rgba(49, 51, 63, 0.2);
+            border-radius: 0.75rem;
+            padding: 0.75rem;
+            background: rgba(250, 250, 250, 0.5);
+            margin-top: 0.25rem;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.title("🧠 Explainable Fake Job Detection Web App")
 st.caption(
     "This Streamlit interface serves the improved TextGCN classifier and keeps the interpretation flow visible, "
@@ -98,12 +113,44 @@ if run_btn:
             shap_payload = shap_values[:, :, "fake_probability"][0]
         except Exception:
             shap_payload = shap_values[0]
+
+        view_col, height_col = st.columns([3, 1])
+        with view_col:
+            full_width_view = st.checkbox(
+                "Use full-width SHAP view",
+                value=True,
+                help="Turn this off if you prefer SHAP next to other content.",
+            )
+        with height_col:
+            shap_height = st.slider("SHAP panel height", min_value=380, max_value=1200, value=760, step=20)
+
         st.write(
             "SHAP highlights decisive predictive traits at token granularity, "
             "which can strengthen transparency and user confidence during screening."
         )
+
+        st.markdown(
+            """
+            <div class="shap-panel">
+            Tip: Scroll inside the panel to inspect the full explanation, or increase panel height for long postings.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
         shap_html = shap.plots.text(shap_payload, display=False)
-        st.components.v1.html(shap_html, height=320, scrolling=True)
+        if full_width_view:
+            placeholder = st.empty()
+        else:
+            left_col, right_col = st.columns([2, 1])
+            with left_col:
+                placeholder = st.empty()
+            with right_col:
+                st.info(
+                    "Use the controls above to resize the SHAP section for complete token-level visibility."
+                )
+
+        placeholder.components.v1.html(shap_html, height=shap_height, scrolling=True)
 
 st.markdown("---")
 st.caption(
