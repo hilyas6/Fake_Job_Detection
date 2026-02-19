@@ -248,6 +248,57 @@ class TextGCNExplainer:
         )
 
 
+def _format_word_list(words: List[Dict[str, object]], heading: str) -> List[str]:
+    if not words:
+        return [f"{heading}: none"]
+
+    lines = [heading + ":"]
+    for idx, word_data in enumerate(words, start=1):
+        token = str(word_data["word"])
+        impact = float(word_data["impact_on_fake_probability"])
+        norm = float(word_data["normalized_impact"])
+        occurrences = int(word_data["occurrences"])
+        lines.append(
+            f"  {idx:>2}. {token:<18} impact={impact:+.4f} "
+            f"normalized={norm:+.2f} occurrences={occurrences}"
+        )
+    return lines
+
+
+def format_explain_result(result: ExplainResult) -> str:
+    lines = [
+        "TextGCN Explainability Summary",
+        "=" * 32,
+        f"Prediction : {result.label.upper()} (confidence={result.confidence:.2%})",
+        (
+            "Probabilities : "
+            f"fake={result.fake_probability:.2%} | real={result.real_probability:.2%} "
+            f"(threshold={result.threshold:.2f})"
+        ),
+        (
+            "Coverage : "
+            f"known tokens={result.text_stats['known_tokens']} / "
+            f"all tokens={result.text_stats['all_tokens']}"
+        ),
+        "",
+    ]
+
+    lines.extend(
+        _format_word_list(
+            result.influential_words,
+            "Top words pushing prediction toward FAKE",
+        )
+    )
+    lines.append("")
+    lines.extend(
+        _format_word_list(
+            result.protective_words,
+            "Top words pushing prediction toward REAL",
+        )
+    )
+    return "\n".join(lines)
+
+
 def run_demo(explainer: TextGCNExplainer, top_k: int, n_samples: int):
     data_path = Path("data/processed/emscad.csv")
     if not data_path.exists():
@@ -259,10 +310,10 @@ def run_demo(explainer: TextGCNExplainer, top_k: int, n_samples: int):
     for i, row in sample.iterrows():
         result = explainer.explain_text(str(row["text"]), top_k=top_k)
         print(f"\n--- Sample id={row['id']} (true_label={row['fraudulent']}) ---")
-        print(json.dumps(asdict(result), indent=2))
+        print(format_explain_result(result))
 
 
-def run_interactive(explainer: TextGCNExplainer, top_k: int):
+def run_interactive(explainer: TextGCNExplainer, top_k: int, output_format: str):
     print("Interactive TextGCN explainability mode")
     print("Paste a job posting (single line) and press enter.")
     print("Type 'exit' or 'quit' to finish.\n")
@@ -282,7 +333,10 @@ def run_interactive(explainer: TextGCNExplainer, top_k: int):
             break
 
         result = explainer.explain_text(text, top_k=top_k)
-        print(json.dumps(asdict(result), indent=2))
+        if output_format == "json":
+            print(json.dumps(asdict(result), indent=2))
+        else:
+            print(format_explain_result(result))
         print()
 
 
@@ -295,6 +349,12 @@ def main():
     parser.add_argument("--model-dir", type=Path, default=Path("models/textgcn"))
     parser.add_argument("--metrics-path", type=Path, default=Path("reports/metrics_textgcn.csv"))
     parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument(
+        "--output-format",
+        choices=["readable", "json"],
+        default="readable",
+        help="Display a concise human-readable summary or raw JSON output.",
+    )
     args = parser.parse_args()
 
     explainer = TextGCNExplainer(
@@ -305,13 +365,16 @@ def main():
 
     if args.text:
         result = explainer.explain_text(args.text, top_k=args.top_k)
-        print(json.dumps(asdict(result), indent=2))
+        if args.output_format == "json":
+            print(json.dumps(asdict(result), indent=2))
+        else:
+            print(format_explain_result(result))
 
     if args.demo_samples > 0:
         run_demo(explainer, top_k=args.top_k, n_samples=args.demo_samples)
 
     if args.interactive:
-        run_interactive(explainer, top_k=args.top_k)
+        run_interactive(explainer, top_k=args.top_k, output_format=args.output_format)
 
     if not args.text and args.demo_samples <= 0 and not args.interactive:
         parser.error("Provide --text, --demo-samples, or --interactive.")
