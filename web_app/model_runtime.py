@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -92,7 +93,18 @@ def _is_git_lfs_pointer(path: Path) -> bool:
 def _load_joblib(path: Path):
     if _is_git_lfs_pointer(path):
         raise RuntimeError(f"{path} is a Git LFS pointer. Run `git lfs pull` and retry.")
+    # Backward compatibility for artifacts trained from scripts where
+    # `tokenize` was saved as `__main__.tokenize` inside the pickled vectorizer.
+    main_module = sys.modules.get("__main__")
+    if main_module is not None and not hasattr(main_module, "tokenize"):
+        setattr(main_module, "tokenize", tokenize)
     return joblib.load(path)
+
+
+def tokenize(text: str):
+    if not isinstance(text, str):
+        return []
+    return TOKEN_RE.findall(text.lower())
 
 
 class ImprovedTextGCNService:
