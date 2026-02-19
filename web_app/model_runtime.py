@@ -165,7 +165,10 @@ class ImprovedTextGCNService:
             probs = self.predict_proba_batch(list(text_batch))
             return probs[:, 1]
 
-        self._shap_explainer = shap.Explainer(fake_probability, masker, output_names=["fake_probability"])
+        # SHAP may raise when `output_names` is a list but the model has a
+        # single output. Let SHAP infer the output layout and rely on the
+        # fallback extraction logic in `explain_prediction`.
+        self._shap_explainer = shap.Explainer(fake_probability, masker)
         return self._shap_explainer, None
 
     @staticmethod
