@@ -15,13 +15,6 @@ import torch.nn.functional as F
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 
 
-def tokenize(text: str):
-    """Compatibility tokenizer used by persisted TF-IDF vectorizers."""
-    if not isinstance(text, str):
-        return []
-    return TOKEN_RE.findall(text.lower())
-
-
 class ImprovedWordGCN(nn.Module):
     """Inference architecture for the improved TextGCN model."""
 
@@ -99,14 +92,6 @@ def _is_git_lfs_pointer(path: Path) -> bool:
 def _load_joblib(path: Path):
     if _is_git_lfs_pointer(path):
         raise RuntimeError(f"{path} is a Git LFS pointer. Run `git lfs pull` and retry.")
-
-    # Compatibility shim: some persisted vectorizers were fit with a
-    # custom tokenizer saved as `__main__.tokenize`.
-    import __main__
-
-    if not hasattr(__main__, "tokenize"):
-        setattr(__main__, "tokenize", tokenize)
-
     return joblib.load(path)
 
 
