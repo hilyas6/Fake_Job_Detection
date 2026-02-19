@@ -6,3 +6,6 @@ torch
 torch-geometric
 matplotlib
 joblib
+
+streamlit
+shap
