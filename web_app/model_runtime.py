@@ -4,7 +4,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 import joblib
 import numpy as np
@@ -12,6 +12,11 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+try:
+    import shap
+except Exception:  # pragma: no cover - optional dependency handling
+    shap = None
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 
@@ -79,6 +84,8 @@ class PredictionResult:
     threshold: float
     influential_words: List[Dict[str, float]]
     protective_words: List[Dict[str, float]]
+    shap_values: object | None = None
+    shap_error: str | None = None
 
 
 def _is_git_lfs_pointer(path: Path) -> bool:
@@ -140,10 +147,26 @@ class ImprovedTextGCNService:
         self.model.eval()
 
         self.threshold = 0.5
+        self._shap_explainer = None
         if metrics_path.exists():
             metrics = pd.read_csv(metrics_path)
             if "threshold" in metrics.columns and not metrics.empty:
                 self.threshold = float(metrics.iloc[0]["threshold"])
+
+    def _build_shap_explainer(self):
+        if shap is None:
+            return None, "SHAP is not installed in the environment."
+        if self._shap_explainer is not None:
+            return self._shap_explainer, None
+
+        masker = shap.maskers.Text(r"\W+")
+
+        def fake_probability(text_batch):
+            probs = self.predict_proba_batch(list(text_batch))
+            return probs[:, 1]
+
+        self._shap_explainer = shap.Explainer(fake_probability, masker, output_names=["fake_probability"])
+        return self._shap_explainer, None
 
     @staticmethod
     def _scipy_to_torch_sparse(x):
@@ -167,23 +190,45 @@ class ImprovedTextGCNService:
         label = "fake" if fake_prob >= self.threshold else "real"
         confidence = fake_prob if label == "fake" else real_prob
 
-        token_spans: Dict[str, List[Tuple[int, int]]] = {}
+        token_counts: Dict[str, int] = {}
         for m in TOKEN_RE.finditer(text):
             token = m.group(0).lower()
-            if token not in self.vocab:
-                continue
-            token_spans.setdefault(token, []).append((m.start(), m.end()))
+            if token in self.vocab:
+                token_counts[token] = token_counts.get(token, 0) + 1
 
-        known_tokens = list(token_spans.keys())
-        if not known_tokens:
-            return PredictionResult(label, fake_prob, real_prob, confidence, self.threshold, [], [])
+        explainer, shap_error = self._build_shap_explainer()
+        shap_values = None
+        deltas: List[tuple[str, float]] = []
+        if explainer is not None:
+            try:
+                shap_values = explainer([text])
+                try:
+                    shap_payload = shap_values[:, :, "fake_probability"][0]
+                except Exception:
+                    shap_payload = shap_values[0]
 
-        masked_texts = [re.sub(rf"\\b{re.escape(token)}\\b", " ", text, flags=re.IGNORECASE) for token in known_tokens]
-        masked_probs = self.predict_proba_batch(masked_texts)
+                token_impacts: Dict[str, float] = {}
+                for raw_token, score in zip(shap_payload.data, shap_payload.values):
+                    token = str(raw_token).strip().lower()
+                    if token in self.vocab:
+                        token_impacts[token] = token_impacts.get(token, 0.0) + float(score)
 
-        deltas = []
-        for token, token_probs in zip(known_tokens, masked_probs):
-            deltas.append((token, fake_prob - float(token_probs[1])))
+                deltas = list(token_impacts.items())
+            except Exception as exc:
+                shap_error = f"Failed to compute SHAP explanation: {exc}"
+
+        if not deltas:
+            return PredictionResult(
+                label,
+                fake_prob,
+                real_prob,
+                confidence,
+                self.threshold,
+                [],
+                [],
+                shap_values=shap_values,
+                shap_error=shap_error,
+            )
 
         max_abs = max(abs(delta) for _, delta in deltas) if deltas else 1.0
 
@@ -192,7 +237,7 @@ class ImprovedTextGCNService:
                 "word": token,
                 "impact_on_fake_probability": float(delta),
                 "normalized_impact": float(delta / max_abs),
-                "occurrences": float(len(token_spans[token])),
+                "occurrences": float(token_counts.get(token, 0)),
             }
 
         influential = sorted((d for d in deltas if d[1] > 0), key=lambda x: x[1], reverse=True)[:top_k]
@@ -206,4 +251,6 @@ class ImprovedTextGCNService:
             threshold=self.threshold,
             influential_words=[payload(token, delta) for token, delta in influential],
             protective_words=[payload(token, delta) for token, delta in protective],
+            shap_values=shap_values,
+            shap_error=shap_error,
         )
