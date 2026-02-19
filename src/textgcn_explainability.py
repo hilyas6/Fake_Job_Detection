@@ -1,7 +1,7 @@
 import argparse
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -91,8 +91,10 @@ class ExplainResult:
     fake_probability: float
     real_probability: float
     threshold: float
-    influential_words: List[Dict[str, float]]
-    protective_words: List[Dict[str, float]]
+    confidence: float
+    text_stats: Dict[str, int]
+    influential_words: List[Dict[str, object]]
+    protective_words: List[Dict[str, object]]
 
 
 class TextGCNExplainer:
@@ -149,12 +151,25 @@ class TextGCNExplainer:
         return torch.sparse_coo_tensor(idx, val, (x.shape[0], x.shape[1])).coalesce()
 
     def predict_proba(self, text: str) -> np.ndarray:
-        x = self.vectorizer.transform([text])
+        probs = self.predict_proba_batch([text])
+        return probs[0]
+
+    def predict_proba_batch(self, texts: List[str]) -> np.ndarray:
+        x = self.vectorizer.transform(texts)
         xt = self._scipy_to_torch_sparse(x).to(self.device)
         with torch.no_grad():
             logits = self.model(self.a_norm, xt)
-            probs = F.softmax(logits, dim=1).squeeze(0).cpu().numpy()
+            probs = F.softmax(logits, dim=1).cpu().numpy()
         return probs
+
+    def _token_spans(self, text: str) -> Dict[str, List[Tuple[int, int]]]:
+        spans: Dict[str, List[Tuple[int, int]]] = {}
+        for m in TOKEN_RE.finditer(text):
+            token = m.group(0).lower()
+            if token not in self.vocab:
+                continue
+            spans.setdefault(token, []).append((m.start(), m.end()))
+        return spans
 
     def _unique_known_unigrams(self, text: str) -> List[str]:
         seen = set()
@@ -172,13 +187,47 @@ class TextGCNExplainer:
         fake_prob = float(probs[1])
         real_prob = float(probs[0])
         label = "fake" if fake_prob >= self.threshold else "real"
+        confidence = fake_prob if label == "fake" else real_prob
+
+        token_spans = self._token_spans(text)
+        known_tokens = list(token_spans.keys())
+
+        if not known_tokens:
+            return ExplainResult(
+                label=label,
+                fake_probability=fake_prob,
+                real_probability=real_prob,
+                threshold=self.threshold,
+                confidence=confidence,
+                text_stats={"all_tokens": len(TOKEN_RE.findall(text)), "known_tokens": 0},
+                influential_words=[],
+                protective_words=[],
+            )
+
+        masked_texts = [
+            re.sub(rf"\b{re.escape(token)}\b", " ", text, flags=re.IGNORECASE)
+            for token in known_tokens
+        ]
+        masked_probs = self.predict_proba_batch(masked_texts)
 
         deltas: List[Tuple[str, float]] = []
-        for token in self._unique_known_unigrams(text):
-            masked = re.sub(rf"\b{re.escape(token)}\b", " ", text, flags=re.IGNORECASE)
-            masked_probs = self.predict_proba(masked)
-            impact = fake_prob - float(masked_probs[1])
+        for token, token_probs in zip(known_tokens, masked_probs):
+            impact = fake_prob - float(token_probs[1])
             deltas.append((token, impact))
+
+        max_abs_impact = max(abs(delta) for _, delta in deltas) if deltas else 1.0
+
+        def to_payload(token: str, delta: float) -> Dict[str, float]:
+            return {
+                "word": token,
+                "impact_on_fake_probability": float(delta),
+                "normalized_impact": float(delta / max_abs_impact),
+                "occurrences": len(token_spans[token]),
+                "spans": [
+                    {"start": int(start), "end": int(end)}
+                    for start, end in token_spans[token]
+                ],
+            }
 
         positive = sorted((d for d in deltas if d[1] > 0), key=lambda x: x[1], reverse=True)[:top_k]
         negative = sorted((d for d in deltas if d[1] < 0), key=lambda x: x[1])[:top_k]
@@ -188,11 +237,13 @@ class TextGCNExplainer:
             fake_probability=fake_prob,
             real_probability=real_prob,
             threshold=self.threshold,
+            confidence=confidence,
+            text_stats={"all_tokens": len(TOKEN_RE.findall(text)), "known_tokens": len(known_tokens)},
             influential_words=[
-                {"word": token, "impact_on_fake_probability": float(delta)} for token, delta in positive
+                to_payload(token, delta) for token, delta in positive
             ],
             protective_words=[
-                {"word": token, "impact_on_fake_probability": float(delta)} for token, delta in negative
+                to_payload(token, delta) for token, delta in negative
             ],
         )
 
@@ -208,7 +259,7 @@ def run_demo(explainer: TextGCNExplainer, top_k: int, n_samples: int):
     for i, row in sample.iterrows():
         result = explainer.explain_text(str(row["text"]), top_k=top_k)
         print(f"\n--- Sample id={row['id']} (true_label={row['fraudulent']}) ---")
-        print(json.dumps(result.__dict__, indent=2))
+        print(json.dumps(asdict(result), indent=2))
 
 
 def run_interactive(explainer: TextGCNExplainer, top_k: int):
@@ -231,7 +282,7 @@ def run_interactive(explainer: TextGCNExplainer, top_k: int):
             break
 
         result = explainer.explain_text(text, top_k=top_k)
-        print(json.dumps(result.__dict__, indent=2))
+        print(json.dumps(asdict(result), indent=2))
         print()
 
 
@@ -254,7 +305,7 @@ def main():
 
     if args.text:
         result = explainer.explain_text(args.text, top_k=args.top_k)
-        print(json.dumps(result.__dict__, indent=2))
+        print(json.dumps(asdict(result), indent=2))
 
     if args.demo_samples > 0:
         run_demo(explainer, top_k=args.top_k, n_samples=args.demo_samples)
