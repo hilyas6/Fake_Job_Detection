@@ -150,8 +150,7 @@ if run_btn:
                     "Use the controls above to resize the SHAP section for complete token-level visibility."
                 )
 
-        with placeholder:
-            st.components.v1.html(shap_html, height=shap_height, scrolling=True)
+        placeholder.components.v1.html(shap_html, height=shap_height, scrolling=True)
 
 st.markdown("---")
 st.caption(
