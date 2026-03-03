@@ -67,6 +67,9 @@ class ImprovedWordGCN(nn.Module):
 
     def forward(self, a_norm: torch.Tensor, x_tfidf_sparse: torch.Tensor) -> torch.Tensor:
         word_h = self.gcn(a_norm)
+        return self.forward_with_cached_word_h(x_tfidf_sparse, word_h)
+
+    def forward_with_cached_word_h(self, x_tfidf_sparse: torch.Tensor, word_h: torch.Tensor) -> torch.Tensor:
         doc_h = torch.sparse.mm(x_tfidf_sparse, word_h)
         doc_h0 = torch.sparse.mm(x_tfidf_sparse, self.emb.weight)
         doc_h = doc_h + doc_h0
@@ -143,9 +146,12 @@ class ImprovedTextGCNService:
         ).to(self.device)
         self.model.load_state_dict(ckpt["state_dict"])
         self.model.eval()
+        with torch.no_grad():
+            self._cached_word_h = self.model.gcn(self.a_norm)
 
         self.threshold = 0.5
         self._shap_explainer = None
+        self._shap_cache: dict[str, object] = {}
         if metrics_path.exists():
             metrics = pd.read_csv(metrics_path)
             if "threshold" in metrics.columns and not metrics.empty:
@@ -180,7 +186,7 @@ class ImprovedTextGCNService:
         x = self.vectorizer.transform(texts)
         x_t = self._scipy_to_torch_sparse(x).to(self.device)
         with torch.no_grad():
-            logits = self.model(self.a_norm, x_t)
+            logits = self.model.forward_with_cached_word_h(x_t, self._cached_word_h)
             probs = F.softmax(logits, dim=1).cpu().numpy()
         return probs
 
@@ -195,7 +201,11 @@ class ImprovedTextGCNService:
         shap_values = None
         if explainer is not None:
             try:
-                shap_values = explainer([text], max_evals=200)
+                if text in self._shap_cache:
+                    shap_values = self._shap_cache[text]
+                else:
+                    shap_values = explainer([text], max_evals=120)
+                    self._shap_cache[text] = shap_values
             except Exception as exc:
                 shap_error = f"Failed to compute SHAP explanation: {exc}"
 

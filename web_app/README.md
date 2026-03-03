@@ -1,7 +1,7 @@
 # Web App (Streamlit)
 
 This folder contains the new web application layer for the Fake Job Detection project.
-It serves the improved TextGCN model and provides explainability outputs so users can understand *why* a listing is predicted as fake or real.
+It serves the improved TextGCN model and focuses the UI on only two outputs: the job classification label and SHAP token-level explainability.
 
 ## What this app includes
 
@@ -9,11 +9,10 @@ It serves the improved TextGCN model and provides explainability outputs so user
   - `models/textgcn/textgcn_improved.pt`
   - `models/textgcn/graph_cache_improved.pt`
   - `models/textgcn/vectorizer_improved.joblib`
-- Token-level masking-based TextGCN explanation (importance and protective tokens).
-- SHAP-based explainability block to highlight decisive predictive traits.
-- Streamlit interface for dynamic, user-facing classification.
-
-The wording and presentation keep slight redundancies and mild passive style intentionally, as requested in the proposal constraints.
+- TextGCN-based prediction using the improved model artifacts.
+- SHAP-based token explainability for the same TextGCN prediction path.
+- Minimal Streamlit interface that removes extra result panels.
+- Runtime optimizations in inference to reduce response latency.
 
 ## Run locally
 

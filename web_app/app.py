@@ -7,7 +7,7 @@ import streamlit.components.v1 as components
 
 from model_runtime import ImprovedTextGCNService
 
-st.set_page_config(page_title="Explainable Fake Job Detector", page_icon="🧠", layout="wide")
+st.set_page_config(page_title="Fake Job Classifier", page_icon="🧠", layout="centered")
 
 st.markdown(
     """
@@ -27,8 +27,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("🧠 Fake Job Classification + SHAP")
-st.caption("TextGCN prediction with SHAP token-level explainability.")
+st.title("🧠 Job Classification")
 
 
 @st.cache_resource(show_spinner=True)
@@ -94,7 +93,3 @@ if run_btn:
         """
         components.html(shap_html, height=shap_height, scrolling=True)
 
-st.markdown("---")
-st.caption(
-    "Built with Streamlit for practical fake-job detection and readable model explanations."
-)
