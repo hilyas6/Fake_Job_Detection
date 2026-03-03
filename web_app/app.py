@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import time
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 import streamlit as st
 
-from web_app.model_runtime import load_model
+APP_DIR = Path(__file__).resolve().parent
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
+
+from model_runtime import load_model
 
 st.set_page_config(page_title="Fake Job Detector", page_icon="🛡️", layout="centered")
 
