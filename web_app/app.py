@@ -1,95 +1,114 @@
 from __future__ import annotations
 
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import streamlit as st
-import streamlit.components.v1 as components
 
-from model_runtime import ImprovedTextGCNService
+from web_app.model_runtime import load_model
 
-st.set_page_config(page_title="Fake Job Classifier", page_icon="🧠", layout="centered")
+st.set_page_config(page_title="Fake Job Detector", page_icon="🛡️", layout="centered")
 
-st.markdown(
-    """
-    <style>
-        .shap-wrapper {
-            background: #ffffff;
-            border-radius: 0.75rem;
-            padding: 0.65rem;
-            border: 1px solid rgba(49, 51, 63, 0.15);
-        }
-        .shap-wrapper div {
-            line-height: 1.35 !important;
-            font-size: 13px !important;
-        }
-    </style>
-    """,
-    unsafe_allow_html=True,
+st.title("🛡️ Detector")
+st.caption("Fast fraud-risk screening using the deployed Improved TextGCN model.")
+
+st.info(
+    "**What this means:** **Fake** means the model detected patterns consistent with fraudulent job ads. "
+    "**Real** means fewer fraud-like patterns were detected."
 )
 
-st.title("🧠 Job Classification")
+with st.expander("Disclaimer", expanded=True):
+    st.write("This is a research/demo tool. Predictions are probabilistic and should support, not replace, human review.")
 
+EXAMPLES = {
+    "Fake example": {
+        "title": "Remote Data Entry Clerk - Immediate Hire",
+        "description": "Earn up to $800 daily from home with no experience. Send your bank details and ID for onboarding today. "
+        "Limited spots, urgent hiring, guaranteed income and no interview required.",
+    },
+    "Real example": {
+        "title": "Backend Software Engineer",
+        "description": "We are seeking a backend engineer with 3+ years of Python experience, REST API design, and PostgreSQL. "
+        "Full-time role with benefits, structured interview process, and clear compensation range.",
+    },
+}
 
-@st.cache_resource(show_spinner=True)
-def load_service() -> ImprovedTextGCNService:
-    return ImprovedTextGCNService(
-        model_dir=Path("models/textgcn"),
-        metrics_path=Path("reports/metrics_textgcn_improved.csv"),
-    )
+if "detector_input" not in st.session_state:
+    st.session_state.detector_input = {"title": "", "description": ""}
 
+c1, c2, c3 = st.columns([1, 1, 1])
+example_choice = c1.selectbox("Example", options=list(EXAMPLES.keys()), label_visibility="collapsed")
+if c2.button("Load example"):
+    st.session_state.detector_input = EXAMPLES[example_choice].copy()
+if c3.button("Clear"):
+    st.session_state.detector_input = {"title": "", "description": ""}
+    st.session_state.pop("last_prediction", None)
 
-
-try:
-    import shap
-except Exception:  # pragma: no cover - optional dependency handling
-    shap = None
-
-
-try:
-    service = load_service()
-except Exception as exc:
-    st.error(
-        "The improved TextGCN artifacts could not be loaded. "
-        "If this repository is using Git LFS, run `git lfs pull` first."
-    )
-    st.exception(exc)
-    st.stop()
-
-job_text = st.text_area(
-    "Paste a job listing text",
-    height=240,
-    placeholder="Include title, requirements, benefits, and contact details if available...",
+job_title = st.text_input("Job title", value=st.session_state.detector_input.get("title", ""))
+job_description = st.text_area(
+    "Job description",
+    value=st.session_state.detector_input.get("description", ""),
+    height=260,
+    placeholder="Paste full job content, including requirements, compensation, and contact details.",
 )
-run_btn = st.button("Classify and Explain", type="primary")
 
-if run_btn:
-    if not job_text.strip():
-        st.warning("Please provide a non-empty job listing text before classification.")
+if st.button("Analyze", type="primary"):
+    if not job_title.strip() or not job_description.strip():
+        st.warning("Job title and description are required.")
         st.stop()
 
-    result = service.explain_prediction(job_text)
+    text = f"{job_title}\n\n{job_description}"
 
-    st.subheader("Classification")
-    st.metric("Label", result.label.upper())
+    try:
+        service = load_model()
+    except Exception as exc:
+        st.error("Failed to load Improved TextGCN artifacts. If needed, run `git lfs pull`.")
+        st.exception(exc)
+        st.stop()
 
-    st.subheader("SHAP Explainability")
-    if shap is None:
-        st.warning("SHAP is not installed in the environment.")
-    elif result.shap_error:
-        st.warning(result.shap_error)
-    elif result.shap_values is None:
-        st.warning("SHAP output was not available for this sample.")
-    else:
-        shap_values = result.shap_values
-        try:
-            shap_payload = shap_values[:, :, "fake_probability"][0]
-        except Exception:
-            shap_payload = shap_values[0]
+    started = time.perf_counter()
+    preprocessed = service.preprocess_text(text)
+    prediction = service.predict_from_preprocessed(preprocessed)
+    runtime_ms = (time.perf_counter() - started) * 1000.0
 
-        shap_height = 680
-        shap_html_raw = shap.plots.text(shap_payload, display=False)
-        shap_html = f"""
-        <div class=\"shap-wrapper\">{shap_html_raw}</div>
-        """
-        components.html(shap_html, height=shap_height, scrolling=True)
+    st.session_state.last_prediction = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "text": text,
+        "title": job_title,
+        "description": job_description,
+        "text_length": len(text),
+        "label": prediction.label,
+        "fake_probability": prediction.fake_probability,
+        "real_probability": prediction.real_probability,
+        "runtime_ms": runtime_ms,
+        "threshold": prediction.threshold,
+    }
 
+    st.markdown("### Prediction")
+    label_text = "FAKE" if prediction.label == "fake" else "REAL"
+    color = "#d62728" if prediction.label == "fake" else "#2ca02c"
+    st.markdown(
+        f"<h1 style='color:{color}; margin-bottom:0.25rem;'>{label_text}</h1>",
+        unsafe_allow_html=True,
+    )
+    st.metric("Fake probability", f"{prediction.fake_probability:.2f}")
+    st.caption("Key reasons will be shown on the Explainability page.")
+    st.caption(f"Prediction generated in {runtime_ms:.1f} ms")
+
+with st.sidebar:
+    st.subheader("App pages")
+    st.write("- Detector")
+    st.write("- Explainability")
+    st.success("Only deployed Improved TextGCN inference is enabled.")
+
+log_path = Path("web_app/prediction_log.csv")
+if "last_prediction" in st.session_state:
+    p = st.session_state.last_prediction
+    if st.button("Log latest prediction metadata"):
+        line = f"{p['timestamp']},{p['text_length']},{p['label']},{p['fake_probability']:.4f},{p['runtime_ms']:.2f}\n"
+        if not log_path.exists():
+            log_path.write_text("timestamp,text_length,label,fake_probability,runtime_ms\n", encoding="utf-8")
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(line)
+        st.success("Metadata logged (no raw text stored).")

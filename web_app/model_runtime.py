@@ -4,7 +4,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
+from typing import Any, List
 
 import joblib
 import numpy as np
@@ -12,6 +12,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import streamlit as st
 
 try:
     import shap
@@ -65,10 +66,6 @@ class ImprovedWordGCN(nn.Module):
         h = (1.0 - self.residual_alpha) * h0 + self.residual_alpha * h
         return self.norm(h)
 
-    def forward(self, a_norm: torch.Tensor, x_tfidf_sparse: torch.Tensor) -> torch.Tensor:
-        word_h = self.gcn(a_norm)
-        return self.forward_with_cached_word_h(x_tfidf_sparse, word_h)
-
     def forward_with_cached_word_h(self, x_tfidf_sparse: torch.Tensor, word_h: torch.Tensor) -> torch.Tensor:
         doc_h = torch.sparse.mm(x_tfidf_sparse, word_h)
         doc_h0 = torch.sparse.mm(x_tfidf_sparse, self.emb.weight)
@@ -85,8 +82,15 @@ class PredictionResult:
     real_probability: float
     confidence: float
     threshold: float
-    shap_values: object | None = None
+
+
+@dataclass
+class ExplanationResult:
+    top_increase_fake: list[dict[str, float]]
+    top_decrease_fake: list[dict[str, float]]
+    shap_values: Any | None = None
     shap_error: str | None = None
+    mode: str = "fast"
 
 
 def _is_git_lfs_pointer(path: Path) -> bool:
@@ -101,8 +105,6 @@ def _is_git_lfs_pointer(path: Path) -> bool:
 def _load_joblib(path: Path):
     if _is_git_lfs_pointer(path):
         raise RuntimeError(f"{path} is a Git LFS pointer. Run `git lfs pull` and retry.")
-    # Backward compatibility for artifacts trained from scripts where
-    # `tokenize` was saved as `__main__.tokenize` inside the pickled vectorizer.
     main_module = sys.modules.get("__main__")
     if main_module is not None and not hasattr(main_module, "tokenize"):
         setattr(main_module, "tokenize", tokenize)
@@ -151,11 +153,39 @@ class ImprovedTextGCNService:
 
         self.threshold = 0.5
         self._shap_explainer = None
-        self._shap_cache: dict[str, object] = {}
+        self._shap_cache: dict[tuple[str, str], object] = {}
         if metrics_path.exists():
             metrics = pd.read_csv(metrics_path)
             if "threshold" in metrics.columns and not metrics.empty:
                 self.threshold = float(metrics.iloc[0]["threshold"])
+
+    def preprocess_text(self, text: str):
+        return self.vectorizer.transform([text])
+
+    @staticmethod
+    def _scipy_to_torch_sparse(x):
+        x = x.tocoo()
+        idx = torch.tensor(np.vstack([x.row, x.col]), dtype=torch.long)
+        val = torch.tensor(x.data, dtype=torch.float32)
+        return torch.sparse_coo_tensor(idx, val, (x.shape[0], x.shape[1])).coalesce()
+
+    def predict_from_preprocessed(self, x) -> PredictionResult:
+        x_t = self._scipy_to_torch_sparse(x).to(self.device)
+        with torch.no_grad():
+            logits = self.model.forward_with_cached_word_h(x_t, self._cached_word_h)
+            probs = F.softmax(logits, dim=1).cpu().numpy()[0]
+
+        fake_prob = float(probs[1])
+        real_prob = float(probs[0])
+        label = "fake" if fake_prob >= self.threshold else "real"
+        confidence = fake_prob if label == "fake" else real_prob
+        return PredictionResult(
+            label=label,
+            fake_probability=fake_prob,
+            real_probability=real_prob,
+            confidence=confidence,
+            threshold=self.threshold,
+        )
 
     def _build_shap_explainer(self):
         if shap is None:
@@ -166,55 +196,65 @@ class ImprovedTextGCNService:
         masker = shap.maskers.Text(r"\W+")
 
         def fake_probability(text_batch):
-            probs = self.predict_proba_batch(list(text_batch))
+            x = self.vectorizer.transform(list(text_batch))
+            x_t = self._scipy_to_torch_sparse(x).to(self.device)
+            with torch.no_grad():
+                logits = self.model.forward_with_cached_word_h(x_t, self._cached_word_h)
+                probs = F.softmax(logits, dim=1).cpu().numpy()
             return probs[:, 1]
 
-        # SHAP may raise when `output_names` is a list but the model has a
-        # single output. Let SHAP infer the output layout and rely on the
-        # fallback extraction logic in `explain_prediction`.
         self._shap_explainer = shap.Explainer(fake_probability, masker)
         return self._shap_explainer, None
 
-    @staticmethod
-    def _scipy_to_torch_sparse(x):
-        x = x.tocoo()
-        idx = torch.tensor(np.vstack([x.row, x.col]), dtype=torch.long)
-        val = torch.tensor(x.data, dtype=torch.float32)
-        return torch.sparse_coo_tensor(idx, val, (x.shape[0], x.shape[1])).coalesce()
-
-    def predict_proba_batch(self, texts: List[str]) -> np.ndarray:
-        x = self.vectorizer.transform(texts)
-        x_t = self._scipy_to_torch_sparse(x).to(self.device)
-        with torch.no_grad():
-            logits = self.model.forward_with_cached_word_h(x_t, self._cached_word_h)
-            probs = F.softmax(logits, dim=1).cpu().numpy()
-        return probs
-
-    def explain_prediction(self, text: str) -> PredictionResult:
-        probs = self.predict_proba_batch([text])[0]
-        fake_prob = float(probs[1])
-        real_prob = float(probs[0])
-        label = "fake" if fake_prob >= self.threshold else "real"
-        confidence = fake_prob if label == "fake" else real_prob
-
+    def explain_text(self, text: str, mode: str = "fast") -> ExplanationResult:
         explainer, shap_error = self._build_shap_explainer()
-        shap_values = None
-        if explainer is not None:
-            try:
-                if text in self._shap_cache:
-                    shap_values = self._shap_cache[text]
-                else:
-                    shap_values = explainer([text], max_evals=120)
-                    self._shap_cache[text] = shap_values
-            except Exception as exc:
-                shap_error = f"Failed to compute SHAP explanation: {exc}"
+        if explainer is None:
+            return ExplanationResult([], [], shap_values=None, shap_error=shap_error, mode=mode)
 
-        return PredictionResult(
-            label=label,
-            fake_probability=fake_prob,
-            real_probability=real_prob,
-            confidence=confidence,
-            threshold=self.threshold,
+        cache_key = (text, mode)
+        try:
+            if cache_key in self._shap_cache:
+                shap_values = self._shap_cache[cache_key]
+            else:
+                max_evals = 100 if mode == "fast" else 250
+                shap_values = explainer([text], max_evals=max_evals)
+                self._shap_cache[cache_key] = shap_values
+        except Exception as exc:
+            return ExplanationResult([], [], shap_values=None, shap_error=f"Failed to compute SHAP explanation: {exc}", mode=mode)
+
+        token_items = []
+        sample = shap_values[0]
+        values = np.array(sample.values)
+        data = np.array(sample.data)
+        for token, value in zip(data, values):
+            token_str = str(token).strip()
+            if not token_str:
+                continue
+            token_items.append((token_str, float(value)))
+
+        aggregated: dict[str, float] = {}
+        for token, value in token_items:
+            aggregated[token] = aggregated.get(token, 0.0) + value
+
+        positives = sorted(((k, v) for k, v in aggregated.items() if v > 0), key=lambda p: p[1], reverse=True)
+        negatives = sorted(((k, v) for k, v in aggregated.items() if v < 0), key=lambda p: p[1])
+        top_k = 10 if mode == "fast" else 20
+
+        top_increase_fake = [{"feature": token, "impact": value} for token, value in positives[:top_k]]
+        top_decrease_fake = [{"feature": token, "impact": value} for token, value in negatives[:top_k]]
+
+        return ExplanationResult(
+            top_increase_fake=top_increase_fake,
+            top_decrease_fake=top_decrease_fake,
             shap_values=shap_values,
-            shap_error=shap_error,
+            shap_error=None,
+            mode=mode,
         )
+
+
+@st.cache_resource(show_spinner=True)
+def load_model() -> ImprovedTextGCNService:
+    return ImprovedTextGCNService(
+        model_dir=Path("models/textgcn"),
+        metrics_path=Path("reports/metrics_textgcn_improved.csv"),
+    )
