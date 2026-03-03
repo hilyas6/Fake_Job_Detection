@@ -1,29 +1,24 @@
 # Web App (Streamlit)
 
-This folder contains the new web application layer for the Fake Job Detection project.
-It serves the improved TextGCN model and focuses the UI on only two outputs: the job classification label and SHAP token-level explainability.
+The Streamlit app is intentionally lightweight and contains exactly two pages:
 
-## What this app includes
+- **Detector**: run fast fraud prediction with the deployed Improved TextGCN model.
+- **Explainability**: show top reasons for the latest prediction using the same model pipeline.
 
-- Improved TextGCN inference pipeline using:
-  - `models/textgcn/textgcn_improved.pt`
-  - `models/textgcn/graph_cache_improved.pt`
-  - `models/textgcn/vectorizer_improved.joblib`
-- TextGCN-based prediction using the improved model artifacts.
-- SHAP-based token explainability for the same TextGCN prediction path.
-- Minimal Streamlit interface that removes extra result panels.
-- Runtime optimizations in inference to reduce response latency.
+## Deployed model artifacts
 
-## Run locally
+- `models/textgcn/textgcn_improved.pt`
+- `models/textgcn/graph_cache_improved.pt`
+- `models/textgcn/vectorizer_improved.joblib`
+
+## Run
 
 ```bash
 streamlit run web_app/app.py
 ```
 
-If model files are tracked through Git LFS, run:
+If model files are tracked with Git LFS, run:
 
 ```bash
 git lfs pull
 ```
-
-before starting the app.
