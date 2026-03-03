@@ -4,7 +4,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import List
 
 import joblib
 import numpy as np
@@ -82,8 +82,6 @@ class PredictionResult:
     real_probability: float
     confidence: float
     threshold: float
-    influential_words: List[Dict[str, object]]
-    protective_words: List[Dict[str, object]]
     shap_values: object | None = None
     shap_error: str | None = None
 
@@ -186,76 +184,20 @@ class ImprovedTextGCNService:
             probs = F.softmax(logits, dim=1).cpu().numpy()
         return probs
 
-    def explain_prediction(self, text: str, top_k: int = 10) -> PredictionResult:
+    def explain_prediction(self, text: str) -> PredictionResult:
         probs = self.predict_proba_batch([text])[0]
         fake_prob = float(probs[1])
         real_prob = float(probs[0])
         label = "fake" if fake_prob >= self.threshold else "real"
         confidence = fake_prob if label == "fake" else real_prob
 
-        token_counts: Dict[str, int] = {}
-        for m in TOKEN_RE.finditer(text):
-            token = m.group(0).lower()
-            if token in self.vocab:
-                token_counts[token] = token_counts.get(token, 0) + 1
-
         explainer, shap_error = self._build_shap_explainer()
         shap_values = None
-        deltas: List[tuple[str, float]] = []
         if explainer is not None:
             try:
-                shap_values = explainer([text])
-                try:
-                    shap_payload = shap_values[:, :, "fake_probability"][0]
-                except Exception:
-                    shap_payload = shap_values[0]
-
-                token_impacts: Dict[str, float] = {}
-                for raw_token, score in zip(shap_payload.data, shap_payload.values):
-                    token = str(raw_token).strip().lower()
-                    if token in self.vocab:
-                        token_impacts[token] = token_impacts.get(token, 0.0) + float(score)
-
-                deltas = list(token_impacts.items())
+                shap_values = explainer([text], max_evals=200)
             except Exception as exc:
                 shap_error = f"Failed to compute SHAP explanation: {exc}"
-
-        if not deltas:
-            return PredictionResult(
-                label,
-                fake_prob,
-                real_prob,
-                confidence,
-                self.threshold,
-                [],
-                [],
-                shap_values=shap_values,
-                shap_error=shap_error,
-            )
-
-        max_abs = max(abs(delta) for _, delta in deltas) if deltas else 1.0
-
-        def payload(token: str, delta: float) -> Dict[str, object]:
-            abs_delta = abs(delta)
-            occurrence_count = token_counts.get(token, 0)
-            if abs_delta >= 0.05:
-                impact_strength = "very high"
-            elif abs_delta >= 0.02:
-                impact_strength = "high"
-            else:
-                impact_strength = "moderate"
-
-            return {
-                "word": token,
-                "impact_on_fake_probability": float(delta),
-                "absolute_impact": float(abs_delta),
-                "normalized_impact": float(delta / max_abs),
-                "occurrences": float(occurrence_count),
-                "impact_strength": impact_strength,
-            }
-
-        influential = sorted((d for d in deltas if d[1] > 0), key=lambda x: x[1], reverse=True)[:top_k]
-        protective = sorted((d for d in deltas if d[1] < 0), key=lambda x: x[1])[:top_k]
 
         return PredictionResult(
             label=label,
@@ -263,8 +205,6 @@ class ImprovedTextGCNService:
             real_probability=real_prob,
             confidence=confidence,
             threshold=self.threshold,
-            influential_words=[payload(token, delta) for token, delta in influential],
-            protective_words=[payload(token, delta) for token, delta in protective],
             shap_values=shap_values,
             shap_error=shap_error,
         )
