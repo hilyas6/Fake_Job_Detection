@@ -4,7 +4,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List
+from typing import Any
 
 import joblib
 import numpy as np
@@ -88,6 +88,11 @@ class PredictionResult:
 class ExplanationResult:
     top_increase_fake: list[dict[str, float]]
     top_decrease_fake: list[dict[str, float]]
+    audit_top_increase_fake: list[dict[str, float]]
+    audit_top_decrease_fake: list[dict[str, float]]
+    phrase_top_increase_fake: list[dict[str, float]]
+    phrase_top_decrease_fake: list[dict[str, float]]
+    stability: dict[str, float] | None = None
     shap_values: Any | None = None
     shap_error: str | None = None
     mode: str = "fast"
@@ -206,10 +211,100 @@ class ImprovedTextGCNService:
         self._shap_explainer = shap.Explainer(fake_probability, masker)
         return self._shap_explainer, None
 
+    @staticmethod
+    def _extract_shap_token_items(sample: Any) -> list[tuple[str, float]]:
+        """Extract token-level SHAP items across common payload shapes."""
+        values = np.asarray(getattr(sample, "values", []))
+        data = np.asarray(getattr(sample, "data", []), dtype=object)
+
+        if values.ndim > 1:
+            values = values.reshape(-1)
+        if data.ndim > 1:
+            data = data.reshape(-1)
+
+        token_items: list[tuple[str, float]] = []
+        for token, value in zip(data, values):
+            token_str = str(token).strip()
+            if not token_str:
+                continue
+            token_items.append((token_str, float(value)))
+        return token_items
+
+    def _sorted_feature_candidates(self, text: str, max_features: int = 30) -> list[tuple[str, float]]:
+        x = self.vectorizer.transform([text])
+        row = x.tocoo()
+        feature_names = self.vectorizer.get_feature_names_out()
+        candidates = [(str(feature_names[col]), float(val)) for col, val in zip(row.col, row.data)]
+        candidates.sort(key=lambda item: item[1], reverse=True)
+        return candidates[:max_features]
+
+    def _mask_phrase(self, text: str, phrase: str) -> str:
+        pattern = re.compile(rf"\b{re.escape(phrase)}\b", flags=re.IGNORECASE)
+        return pattern.sub(" ", text)
+
+    def _occlusion_audit(self, text: str, fake_prob: float, top_k: int = 10) -> tuple[list[dict[str, float]], list[dict[str, float]]]:
+        candidates = self._sorted_feature_candidates(text)
+        if not candidates:
+            return [], []
+
+        masked_texts = [self._mask_phrase(text, phrase) for phrase, _ in candidates]
+        x = self.vectorizer.transform(masked_texts)
+        x_t = self._scipy_to_torch_sparse(x).to(self.device)
+        with torch.no_grad():
+            logits = self.model.forward_with_cached_word_h(x_t, self._cached_word_h)
+            probs = F.softmax(logits, dim=1).cpu().numpy()
+
+        deltas = []
+        for (phrase, tfidf_weight), row in zip(candidates, probs):
+            delta = fake_prob - float(row[1])
+            deltas.append((phrase, delta, tfidf_weight))
+
+        positives = [
+            {"feature": feature, "impact": impact, "tfidf_weight": tfidf}
+            for feature, impact, tfidf in sorted((d for d in deltas if d[1] > 0), key=lambda x: x[1], reverse=True)[:top_k]
+        ]
+        negatives = [
+            {"feature": feature, "impact": impact, "tfidf_weight": tfidf}
+            for feature, impact, tfidf in sorted((d for d in deltas if d[1] < 0), key=lambda x: x[1])[:top_k]
+        ]
+        return positives, negatives
+
+    def _split_phrase_vs_token(self, records: list[dict[str, float]]) -> tuple[list[dict[str, float]], list[dict[str, float]]]:
+        phrase = [item for item in records if " " in item["feature"]]
+        token = [item for item in records if " " not in item["feature"]]
+        return token, phrase
+
+    @staticmethod
+    def _rank_biased_overlap(a: list[str], b: list[str], k: int = 10, p: float = 0.9) -> float:
+        if not a or not b:
+            return 0.0
+        score = 0.0
+        seen_a, seen_b = set(), set()
+        depth = min(k, max(len(a), len(b)))
+        for d in range(1, depth + 1):
+            if d <= len(a):
+                seen_a.add(a[d - 1])
+            if d <= len(b):
+                seen_b.add(b[d - 1])
+            overlap = len(seen_a.intersection(seen_b)) / d
+            score += overlap * (p ** (d - 1))
+        return (1 - p) * score
+
+    def _stability_probe(self, text: str, baseline_top: list[dict[str, float]]) -> dict[str, float]:
+        if not baseline_top:
+            return {"rbo_top10": 0.0}
+        perturbed = " ".join(text.split())
+        if perturbed == text:
+            perturbed = f" {text} "
+        alt = self.explain_text(perturbed, mode="fast")
+        base = [item["feature"] for item in baseline_top[:10]]
+        comp = [item["feature"] for item in alt.top_increase_fake[:10]]
+        return {"rbo_top10": self._rank_biased_overlap(base, comp, k=10)}
+
     def explain_text(self, text: str, mode: str = "fast") -> ExplanationResult:
         explainer, shap_error = self._build_shap_explainer()
         if explainer is None:
-            return ExplanationResult([], [], shap_values=None, shap_error=shap_error, mode=mode)
+            return ExplanationResult([], [], [], [], [], [], shap_values=None, shap_error=shap_error, mode=mode)
 
         cache_key = (text, mode)
         try:
@@ -220,17 +315,10 @@ class ImprovedTextGCNService:
                 shap_values = explainer([text], max_evals=max_evals)
                 self._shap_cache[cache_key] = shap_values
         except Exception as exc:
-            return ExplanationResult([], [], shap_values=None, shap_error=f"Failed to compute SHAP explanation: {exc}", mode=mode)
+            return ExplanationResult([], [], [], [], [], [], shap_values=None, shap_error=f"Failed to compute SHAP explanation: {exc}", mode=mode)
 
-        token_items = []
         sample = shap_values[0]
-        values = np.array(sample.values)
-        data = np.array(sample.data)
-        for token, value in zip(data, values):
-            token_str = str(token).strip()
-            if not token_str:
-                continue
-            token_items.append((token_str, float(value)))
+        token_items = self._extract_shap_token_items(sample)
 
         aggregated: dict[str, float] = {}
         for token, value in token_items:
@@ -242,10 +330,21 @@ class ImprovedTextGCNService:
 
         top_increase_fake = [{"feature": token, "impact": value} for token, value in positives[:top_k]]
         top_decrease_fake = [{"feature": token, "impact": value} for token, value in negatives[:top_k]]
+        audit_pos, audit_neg = self._occlusion_audit(text, fake_prob=self.predict_from_preprocessed(self.preprocess_text(text)).fake_probability, top_k=top_k)
+
+        _, phrase_top_increase_fake = self._split_phrase_vs_token(audit_pos)
+        _, phrase_top_decrease_fake = self._split_phrase_vs_token(audit_neg)
+
+        stability = self._stability_probe(text, top_increase_fake) if mode == "full" else None
 
         return ExplanationResult(
             top_increase_fake=top_increase_fake,
             top_decrease_fake=top_decrease_fake,
+            audit_top_increase_fake=audit_pos,
+            audit_top_decrease_fake=audit_neg,
+            phrase_top_increase_fake=phrase_top_increase_fake,
+            phrase_top_decrease_fake=phrase_top_decrease_fake,
+            stability=stability,
             shap_values=shap_values,
             shap_error=None,
             mode=mode,
