@@ -106,6 +106,10 @@ with st.sidebar:
     st.write("- Detector")
     st.write("- Explainability")
     st.success("Only deployed Improved TextGCN inference is enabled.")
+    try:
+        st.caption(f"Loaded model: {load_model().model_signature}")
+    except Exception:
+        st.caption("Loaded model: unavailable")
 
 log_path = Path("web_app/prediction_log.csv")
 if "last_prediction" in st.session_state:
