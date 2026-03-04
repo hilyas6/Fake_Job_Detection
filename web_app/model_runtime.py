@@ -131,13 +131,30 @@ class ImprovedTextGCNService:
     ):
         self.model_dir = model_dir
         self.device = torch.device(device)
+        self.expected_artifacts = {
+            "vectorizer": model_dir / "vectorizer_improved.joblib",
+            "graph_cache": model_dir / "graph_cache_improved.pt",
+            "checkpoint": model_dir / "textgcn_improved.pt",
+        }
 
-        self.vectorizer = _load_joblib(model_dir / "vectorizer_improved.joblib")
-        graph_cache = torch.load(model_dir / "graph_cache_improved.pt", map_location="cpu", weights_only=False)
-        ckpt = torch.load(model_dir / "textgcn_improved.pt", map_location="cpu", weights_only=False)
+        missing = [str(path) for path in self.expected_artifacts.values() if not path.exists()]
+        if missing:
+            raise FileNotFoundError(
+                "Improved TextGCN artifacts are missing: "
+                f"{', '.join(missing)}. Ensure the improved model is trained/deployed."
+            )
+
+        self.vectorizer = _load_joblib(self.expected_artifacts["vectorizer"])
+        graph_cache = torch.load(self.expected_artifacts["graph_cache"], map_location="cpu", weights_only=False)
+        ckpt = torch.load(self.expected_artifacts["checkpoint"], map_location="cpu", weights_only=False)
 
         self.inv_vocab = graph_cache["inv_vocab"]
         self.vocab = {token: int(idx) for idx, token in self.inv_vocab.items()}
+        if len(self.vocab) != int(ckpt["num_words"]):
+            raise ValueError(
+                "Improved TextGCN artifacts are inconsistent: "
+                f"vectorizer/graph vocab={len(self.vocab)} but checkpoint num_words={int(ckpt['num_words'])}."
+            )
 
         self.a_norm = torch.sparse_coo_tensor(
             graph_cache["A_norm_indices"],
@@ -159,10 +176,24 @@ class ImprovedTextGCNService:
         self.threshold = 0.5
         self._shap_explainer = None
         self._shap_cache: dict[tuple[str, str], object] = {}
+        self.model_name = "textgcn_improved"
         if metrics_path.exists():
             metrics = pd.read_csv(metrics_path)
+            if "model" in metrics.columns and not metrics.empty:
+                metric_model = str(metrics.iloc[0]["model"]).strip().lower()
+                if metric_model and metric_model != self.model_name:
+                    raise ValueError(
+                        f"Metrics file model='{metric_model}' does not match required '{self.model_name}'."
+                    )
             if "threshold" in metrics.columns and not metrics.empty:
                 self.threshold = float(metrics.iloc[0]["threshold"])
+
+    @property
+    def model_signature(self) -> str:
+        return (
+            f"{self.model_name} | ckpt={self.expected_artifacts['checkpoint'].name} | "
+            f"vec={self.expected_artifacts['vectorizer'].name}"
+        )
 
     def preprocess_text(self, text: str):
         return self.vectorizer.transform([text])
