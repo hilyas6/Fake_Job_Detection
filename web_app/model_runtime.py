@@ -20,6 +20,14 @@ except Exception:  # pragma: no cover - optional dependency handling
     shap = None
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
+COMPANY_RE = re.compile(r"\b(?:ltd|llc|inc|company|corp|limited)\b", re.IGNORECASE)
+CAPITALIZED_PHRASE_RE = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b")
+LOCATION_RE = re.compile(
+    r"\b(?:remote|hybrid|onsite|on-site|city|state|country|london|new york|uk|usa|canada|india|australia)\b",
+    re.IGNORECASE,
+)
+URL_RE = re.compile(r"(?:https?://\S+|www\.\S+)", re.IGNORECASE)
+SALARY_RE = re.compile(r"(?:[£$€]\s?\d|\b\d+\s?k\b|per\s+(?:hour|annum|year|month))", re.IGNORECASE)
 
 
 class ImprovedWordGCN(nn.Module):
@@ -222,6 +230,85 @@ class ImprovedTextGCNService:
             confidence=confidence,
             threshold=self.threshold,
         )
+
+    def estimate_uncertainty_interval(
+        self,
+        x_preprocessed,
+        n: int = 12,
+        q_low: float = 0.10,
+        q_high: float = 0.90,
+    ) -> tuple[float, float]:
+        """Estimate a likely fake-probability range using MC dropout."""
+        baseline = self.predict_from_preprocessed(x_preprocessed).fake_probability
+        try:
+            x_t = self._scipy_to_torch_sparse(x_preprocessed).to(self.device)
+            prev_mode = self.model.training
+            self.model.train()
+            samples: list[float] = []
+            with torch.no_grad():
+                for _ in range(max(1, int(n))):
+                    logits = self.model.forward_with_cached_word_h(x_t, self._cached_word_h)
+                    probs = F.softmax(logits, dim=1).cpu().numpy()[0]
+                    samples.append(float(probs[1]))
+            self.model.train(prev_mode)
+            if not samples:
+                return baseline, baseline
+            low = float(np.quantile(samples, q_low))
+            high = float(np.quantile(samples, q_high))
+            return low, high
+        except Exception:
+            self.model.eval()
+            return baseline, baseline
+
+    def input_quality(self, title: str, description: str) -> dict[str, Any]:
+        text = f"{title}\n\n{description}"
+        missing_fields: list[str] = []
+
+        has_company = bool(COMPANY_RE.search(text) or CAPITALIZED_PHRASE_RE.search(title))
+        has_location = bool(LOCATION_RE.search(text))
+        has_apply_url = bool(URL_RE.search(text))
+        has_salary = bool(SALARY_RE.search(text))
+
+        if not has_company:
+            missing_fields.append("company")
+        if not has_location:
+            missing_fields.append("location")
+        if not has_salary:
+            missing_fields.append("salary")
+        if not has_apply_url:
+            missing_fields.append("apply_url")
+
+        return {
+            "text_length": len(text),
+            "missing_fields_count": len(missing_fields),
+            "missing_fields_list": missing_fields,
+        }
+
+    def reliability_bucket(self, ci_low: float, ci_high: float, quality: dict[str, Any]) -> tuple[str, str]:
+        width = ci_high - ci_low
+        score = 0
+        if width < 0.10:
+            score += 2
+        elif width < 0.20:
+            score += 1
+
+        missing_count = int(quality.get("missing_fields_count", 0))
+        if missing_count == 0:
+            score += 2
+        elif missing_count <= 1:
+            score += 1
+
+        text_length = int(quality.get("text_length", 0))
+        if text_length >= 600:
+            score += 1
+        elif text_length < 250:
+            score -= 1
+
+        if score >= 4:
+            return "High", "Model had enough information and predictions were stable."
+        if score >= 2:
+            return "Medium", "Some uncertainty or missing info reduces reliability."
+        return "Low", "High uncertainty and/or missing details; treat as weak signal."
 
     def _build_shap_explainer(self):
         if shap is None:
