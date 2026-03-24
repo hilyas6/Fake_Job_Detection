@@ -133,23 +133,23 @@ def tokenize(text: str):
 class ImprovedTextGCNService:
     def __init__(
         self,
-        model_dir: Path = Path("models/textgcn"),
-        metrics_path: Path = Path("reports/metrics_textgcn_improved.csv"),
+        model_dir: Path = Path("models/tuned/textgcn_tuned"),
+        metrics_path: Path = Path("reports/tuned/metrics_textgcn_tuned.csv"),
         device: str = "cpu",
     ):
         self.model_dir = model_dir
         self.device = torch.device(device)
         self.expected_artifacts = {
-            "vectorizer": model_dir / "vectorizer_improved.joblib",
-            "graph_cache": model_dir / "graph_cache_improved.pt",
-            "checkpoint": model_dir / "textgcn_improved.pt",
+            "vectorizer": model_dir / "vectorizer_tuned.joblib",
+            "graph_cache": model_dir / "graph_cache_tuned.pt",
+            "checkpoint": model_dir / "textgcn_tuned.pt",
         }
 
         missing = [str(path) for path in self.expected_artifacts.values() if not path.exists()]
         if missing:
             raise FileNotFoundError(
-                "Improved TextGCN artifacts are missing: "
-                f"{', '.join(missing)}. Ensure the improved model is trained/deployed."
+                "Tuned TextGCN artifacts are missing: "
+                f"{', '.join(missing)}. Run `python tuned_models/best_tuned_textgcn_model.py` first."
             )
 
         self.vectorizer = _load_joblib(self.expected_artifacts["vectorizer"])
@@ -184,12 +184,12 @@ class ImprovedTextGCNService:
         self.threshold = 0.5
         self._shap_explainer = None
         self._shap_cache: dict[tuple[str, str], object] = {}
-        self.model_name = "textgcn_improved"
+        self.model_name = "textgcn_tuned"
         if metrics_path.exists():
             metrics = pd.read_csv(metrics_path)
             if "model" in metrics.columns and not metrics.empty:
                 metric_model = str(metrics.iloc[0]["model"]).strip().lower()
-                if metric_model and metric_model != self.model_name:
+                if metric_model and metric_model not in (self.model_name, "textgcn_improved"):
                     raise ValueError(
                         f"Metrics file model='{metric_model}' does not match required '{self.model_name}'."
                     )
@@ -472,6 +472,6 @@ class ImprovedTextGCNService:
 @st.cache_resource(show_spinner=True)
 def load_model() -> ImprovedTextGCNService:
     return ImprovedTextGCNService(
-        model_dir=Path("models/textgcn"),
-        metrics_path=Path("reports/metrics_textgcn_improved.csv"),
+        model_dir=Path("models/tuned/textgcn_tuned"),
+        metrics_path=Path("reports/tuned/metrics_textgcn_tuned.csv"),
     )
