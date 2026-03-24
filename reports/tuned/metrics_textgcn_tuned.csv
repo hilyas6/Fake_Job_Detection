@@ -1,0 +1,2 @@
+model,emscad_test_f1,emscad_test_precision,emscad_test_recall,openbay_recall,openbay_mean_prob,vocab_size,threshold,trial
+textgcn_tuned,0.838951,0.903226,0.783217,0.9334,0.753465,40000,0.48,v2_ensemble3_window15
