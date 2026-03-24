@@ -1,3 +1,6 @@
+"""Before vs After tuning comparison — horizontal bar chart for all model families."""
+from __future__ import annotations
+
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -6,119 +9,89 @@ import pandas as pd
 
 from src.config import PATHS
 
-
 METRICS = ["emscad_test_f1", "emscad_test_precision", "emscad_test_recall"]
-METRIC_LABELS = {
-    "emscad_test_f1": "F1",
-    "emscad_test_precision": "Precision",
-    "emscad_test_recall": "Recall",
-}
+LABELS  = {"emscad_test_f1": "F1", "emscad_test_precision": "Precision", "emscad_test_recall": "Recall"}
+
+# (display_name, before_csv, after_csv)  — all paths relative to reports/
+_PAIRS = [
+    ("BiLSTM",               "metrics_bilstm.csv",               "tuned/metrics_bilstm.csv"),
+    ("DistilBERT",           "metrics_distilbert.csv",           "tuned/metrics_distilbert.csv"),
+    ("LightGBM",             "metrics_lightgbm.csv",             "tuned/metrics_lightgbm.csv"),
+    ("Logistic Regression",  "metrics_logistic_regression.csv",  "tuned/metrics_logistic_regression.csv"),
+    ("Naive Bayes",          "metrics_naive_bayes.csv",          "tuned/metrics_naive_bayes.csv"),
+    ("Random Forest",        "metrics_random_forest.csv",        "tuned/metrics_random_forest.csv"),
+    ("TextGCN",              "metrics_textgcn_improved.csv",     "tuned/metrics_textgcn_tuned.csv"),
+    ("XGBoost",              "metrics_xgboost.csv",              "tuned/metrics_xgboost.csv"),
+]
+
+COLOR_BEFORE = "#7f8c8d"
+COLOR_AFTER  = "#1abc9c"
 
 
-def _read_metrics_row(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    if "model" not in df.columns:
-        raise ValueError(f"Expected 'model' column in {path}")
-    return df[["model", *METRICS]].copy()
-
-
-def build_before_after_dataframe() -> pd.DataFrame:
-    reports = PATHS.reports
-
-    base_files = {
-        "logistic_regression": reports / "metrics_logistic_regression.csv",
-        "naive_bayes": reports / "metrics_naive_bayes.csv",
-        "random_forest": reports / "metrics_random_forest.csv",
-        "xgboost": reports / "metrics_xgboost.csv",
-        "lightgbm": reports / "metrics_lightgbm.csv",
-        "distilbert": reports / "metrics_distilbert.csv",
-        "bilstm": reports / "metrics_bilstm.csv",
-    }
-
-    tuned_files = {
-        "logistic_regression": reports / "tuned" / "metrics_logistic_regression.csv",
-        "naive_bayes": reports / "tuned" / "metrics_naive_bayes.csv",
-        "random_forest": reports / "tuned" / "metrics_random_forest.csv",
-        "xgboost": reports / "tuned" / "metrics_xgboost.csv",
-        "lightgbm": reports / "tuned" / "metrics_lightgbm.csv",
-        "distilbert": reports / "tuned" / "metrics_distilbert.csv",
-        "bilstm": reports / "tuned" / "metrics_bilstm.csv",
-    }
-
-    rows = []
-
-    for model_name, file_path in base_files.items():
-        row = _read_metrics_row(file_path).iloc[0].to_dict()
-        row["model"] = model_name
-        row["version"] = "Before tuning"
-        rows.append(row)
-
-    for model_name, file_path in tuned_files.items():
-        row = _read_metrics_row(file_path).iloc[0].to_dict()
-        row["model"] = model_name
-        row["version"] = "After tuning"
-        rows.append(row)
-
-    # User requested mapping: normal TextGCN = base, improved TextGCN = tuned.
-    textgcn_base = _read_metrics_row(reports / "metrics_textgcn.csv").iloc[0].to_dict()
-    textgcn_base["model"] = "textgcn"
-    textgcn_base["version"] = "Before tuning"
-    rows.append(textgcn_base)
-
-    textgcn_tuned = _read_metrics_row(reports / "metrics_textgcn_improved.csv").iloc[0].to_dict()
-    textgcn_tuned["model"] = "textgcn"
-    textgcn_tuned["version"] = "After tuning"
-    rows.append(textgcn_tuned)
-
-    df = pd.DataFrame(rows)
-    ordered_models = sorted(df["model"].unique())
-    df["model"] = pd.Categorical(df["model"], categories=ordered_models, ordered=True)
-    return df.sort_values(["model", "version"]).reset_index(drop=True)
-
-
-def plot_before_after_comparison(df: pd.DataFrame, out_path: Path) -> None:
-    models = list(df["model"].cat.categories)
-    y = np.arange(len(models))
-    bar_height = 0.36
-    all_scores = df[METRICS].to_numpy().flatten()
-    x_min = max(0.0, float(np.nanmin(all_scores)) - 0.05)
-    x_max = min(1.0, float(np.nanmax(all_scores)) + 0.02)
-
-    fig, axes = plt.subplots(1, 3, figsize=(20, 7), sharey=True)
-
-    for ax, metric_col in zip(axes, METRICS):
-        before_scores = []
-        after_scores = []
-        for model in models:
-            model_rows = df[df["model"] == model]
-            before_scores.append(float(model_rows[model_rows["version"] == "Before tuning"][metric_col].iloc[0]))
-            after_scores.append(float(model_rows[model_rows["version"] == "After tuning"][metric_col].iloc[0]))
-
-        ax.barh(y - bar_height / 2, before_scores, height=bar_height, label="Before tuning", color="#7f8c8d")
-        ax.barh(y + bar_height / 2, after_scores, height=bar_height, label="After tuning", color="#1abc9c")
-
-        ax.set_title(METRIC_LABELS[metric_col], fontweight="bold")
-        ax.set_xlim(x_min, x_max)
-        ax.set_xlabel("Score")
-        ax.set_yticks(y)
-        ax.set_yticklabels(models)
-        ax.grid(axis="x", alpha=0.25)
-
-    axes[0].set_ylabel("Model")
-    axes[0].legend(loc="lower right", title="Version")
-    fig.suptitle("Model Performance Comparison: Before vs After Tuning", fontsize=18, fontweight="bold")
-    plt.tight_layout()
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+def _load(rel: str) -> pd.Series | None:
+    try:
+        df = pd.read_csv(PATHS.reports / rel)
+        return df.iloc[0] if not df.empty else None
+    except FileNotFoundError:
+        return None
 
 
 def main() -> None:
-    df = build_before_after_dataframe()
-    output_path = PATHS.reports / "figures" / "04_before_after_tuning_comparison.png"
-    plot_before_after_comparison(df, output_path)
-    print(f"Saved chart to {output_path}")
+    names, before_rows, after_rows = [], [], []
+    for name, before_path, after_path in _PAIRS:
+        b = _load(before_path)
+        a = _load(after_path)
+        if b is None or a is None:
+            print(f"  skipped {name} (missing file)")
+            continue
+        names.append(name)
+        before_rows.append(b)
+        after_rows.append(a)
+
+    y = np.arange(len(names))
+    bh = 0.36
+
+    fig, axes = plt.subplots(1, 3, figsize=(20, max(6, len(names) * 0.8 + 2)), sharey=True)
+    fig.patch.set_facecolor("white")
+
+    all_vals = []
+    for row in before_rows + after_rows:
+        all_vals.extend([float(row[m]) for m in METRICS if m in row])
+    x_min = max(0.0, min(all_vals) - 0.04)
+    x_max = min(1.0, max(all_vals) + 0.025)
+
+    for ax, metric in zip(axes, METRICS):
+        b_vals = [float(r[metric]) if metric in r else 0.0 for r in before_rows]
+        a_vals = [float(r[metric]) if metric in r else 0.0 for r in after_rows]
+
+        bars_b = ax.barh(y - bh / 2, b_vals, height=bh, label="Before tuning", color=COLOR_BEFORE, edgecolor="white", linewidth=0.5)
+        bars_a = ax.barh(y + bh / 2, a_vals, height=bh, label="After tuning",  color=COLOR_AFTER,  edgecolor="white", linewidth=0.5)
+
+        # Annotate improvement deltas
+        for i, (bv, av) in enumerate(zip(b_vals, a_vals)):
+            delta = av - bv
+            if abs(delta) > 0.001:
+                color = "#27ae60" if delta > 0 else "#e74c3c"
+                ax.text(max(av, bv) + 0.003, y[i] + bh / 2, f"{delta:+.3f}",
+                        va="center", ha="left", fontsize=7.5, color=color, fontweight="bold")
+
+        ax.set_title(LABELS[metric], fontweight="bold", fontsize=13, pad=10)
+        ax.set_xlim(x_min, x_max - 0.01)
+        ax.set_xlabel("Score", fontsize=10)
+        ax.set_yticks(y)
+        ax.set_yticklabels(names, fontsize=10)
+        ax.grid(axis="x", alpha=0.25, linestyle="--")
+        ax.spines[["top", "right"]].set_visible(False)
+
+    axes[0].legend(loc="lower right", fontsize=9, framealpha=0.7)
+    fig.suptitle("Model Performance: Before vs After Tuning", fontsize=16, fontweight="bold", y=1.01)
+    plt.tight_layout()
+
+    out = PATHS.reports / "figures" / "04_before_after_tuning_comparison.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=300, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    print(f"Saved → {out}")
 
 
 if __name__ == "__main__":

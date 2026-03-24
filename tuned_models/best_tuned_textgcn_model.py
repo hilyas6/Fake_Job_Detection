@@ -1,6 +1,6 @@
 """
-Best Tuned TextGCN — Training Script
-======================================
+Best Tuned TextGCN - Training Script
+
 Trains the winning configuration (3-seed ensemble + PMI window=15) and saves
 model artifacts and metrics ready for comparison.
 
@@ -8,10 +8,10 @@ Run:
     python tuned_models/best_tuned_textgcn_model.py
 
 Outputs:
-    models/tuned/textgcn_tuned/textgcn_tuned.pt       — model weights (seed 42)
-    models/tuned/textgcn_tuned/graph_cache_tuned.pt   — PMI graph + vocabulary
-    models/tuned/textgcn_tuned/vectorizer_tuned.joblib — fitted TF-IDF vectorizer
-    reports/tuned/metrics_textgcn_tuned.csv            — metrics for comparison
+    models/tuned/textgcn_tuned/textgcn_tuned.pt        - model weights (seed 42)
+    models/tuned/textgcn_tuned/graph_cache_tuned.pt    - PMI graph + vocabulary
+    models/tuned/textgcn_tuned/vectorizer_tuned.joblib - fitted TF-IDF vectorizer
+    reports/tuned/metrics_textgcn_tuned.csv            - metrics for comparison
 """
 import math
 import sys
@@ -42,7 +42,7 @@ from tuned_models.tune_textgcn import (
     REPORTS_DIR,
 )
 
-# ── Winning configuration ───────────────────────────────────────────────────────
+# Winning configuration
 CFG = TrialConfig(
     name            = "ensemble_3seeds_window15",
     hidden_dim      = 300,
@@ -73,7 +73,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    # ── Load data ───────────────────────────────────────────────────────────────
+    # Load data
     bundle = load_data()
     train_df, val_df, test_df, ob_df = (
         bundle["train"], bundle["val"], bundle["test"], bundle["ob"]
@@ -81,7 +81,7 @@ def main():
     print(f"Train: {len(train_df)}  Val: {len(val_df)}"
           f"  Test: {len(test_df)}  OpenBay: {len(ob_df)}")
 
-    # ── TF-IDF vectorizer ───────────────────────────────────────────────────────
+    # TF-IDF vectorizer
     from sklearn.feature_extraction.text import TfidfVectorizer
     vec = TfidfVectorizer(
         tokenizer=tokenize, preprocessor=None, token_pattern=None,
@@ -98,7 +98,7 @@ def main():
     print(f"\nVocab size : {num_words}")
     print(f"PMI window : {CFG.window_size}")
 
-    # ── PMI graph ───────────────────────────────────────────────────────────────
+    # PMI graph
     tok_train = [tokenize(t) for t in train_df["text"].tolist()]
     rows, cols, vals, n = build_pmi_graph(tok_train, vocab, window_size=CFG.window_size)
     A = normalize_adj(rows, cols, vals, n).to(device)
@@ -115,12 +115,12 @@ def main():
     y_va_np = y_va.cpu().numpy()
     y_te_np = y_te.cpu().numpy()
 
-    # ── Train 3-seed ensemble ───────────────────────────────────────────────────
-    print(f"\nTraining {CFG.n_seeds}-seed ensemble (seeds {CFG.base_seed}–{CFG.base_seed + CFG.n_seeds - 1})")
+    # Train 3-seed ensemble
+    print(f"\nTraining {CFG.n_seeds}-seed ensemble (seeds {CFG.base_seed}-{CFG.base_seed + CFG.n_seeds - 1})")
     all_val, all_test, all_ob = [], [], []
     for s in range(CFG.n_seeds):
         seed = CFG.base_seed + s
-        print(f"  → seed {seed}")
+        print(f"  seed {seed}")
         vp, tp, op, best_vf1 = train_single(
             CFG, A, X_tr, X_va, X_te, X_ob, y_tr, y_va, num_words, device, seed_offset=s
         )
@@ -133,26 +133,23 @@ def main():
     test_probs = np.mean(all_test, axis=0)
     ob_probs   = np.mean(all_ob,   axis=0)
 
-    # ── Threshold tuning and evaluation ────────────────────────────────────────
+    # Threshold tuning and evaluation
     thr = best_threshold(val_probs, y_va_np)
     test_f1, test_p, test_r = eval_at(test_probs, y_te_np, thr["t"])
     ob_recall = float(np.mean((ob_probs >= thr["t"]).astype(int) == 1))
 
-    # ── Print results ───────────────────────────────────────────────────────────
-    print(f"\n{'─'*50}")
-    print(f"{'Metric':<22} {'Baseline':>10} {'Tuned':>10} {'Δ':>8}")
-    print(f"{'─'*50}")
+    # Print results
+    print(f"\n{'Metric':<22} {'Baseline':>10} {'Tuned':>10} {'Delta':>8}")
     print(f"{'EMSCAD F1':<22} {BASELINE['f1']:>10.4f} {test_f1:>10.4f} {test_f1 - BASELINE['f1']:>+8.4f}")
     print(f"{'EMSCAD Precision':<22} {BASELINE['precision']:>10.4f} {test_p:>10.4f} {test_p - BASELINE['precision']:>+8.4f}")
     print(f"{'EMSCAD Recall':<22} {BASELINE['recall']:>10.4f} {test_r:>10.4f} {test_r - BASELINE['recall']:>+8.4f}")
     print(f"{'OpenBay Recall':<22} {BASELINE['ob_recall']:>10.4f} {ob_recall:>10.4f} {ob_recall - BASELINE['ob_recall']:>+8.4f}")
     print(f"{'Threshold':<22} {'0.48':>10} {thr['t']:>10.2f}")
-    print(f"{'─'*50}")
 
     beats = test_f1 > BASELINE["f1"]
-    print(f"\n{'✅ Beats baseline' if beats else '❌ Below baseline'} (baseline F1 = {BASELINE['f1']:.4f})")
+    print(f"\n{'Beats baseline' if beats else 'Below baseline'} (baseline F1 = {BASELINE['f1']:.4f})")
 
-    # ── Save metrics ────────────────────────────────────────────────────────────
+    # Save metrics
     pd.DataFrame([{
         "model":                 "textgcn_tuned",
         "emscad_test_f1":        round(test_f1, 6),
@@ -164,7 +161,7 @@ def main():
         "trial":                 CFG.name,
     }]).to_csv(REPORTS_DIR / "metrics_textgcn_tuned.csv", index=False)
 
-    # ── Save graph + vectorizer ─────────────────────────────────────────────────
+    # Save graph and vectorizer
     inv_vocab = {i: t for t, i in vocab.items()}
     joblib.dump(vec, TUNED_MODEL_DIR / "vectorizer_tuned.joblib")
     torch.save({
@@ -174,7 +171,7 @@ def main():
         "inv_vocab":      inv_vocab,
     }, TUNED_MODEL_DIR / "graph_cache_tuned.pt")
 
-    # ── Re-train and save seed-42 model for single-model serving ───────────────
+    # Re-train seed-42 model for single-model serving
     print("\nSaving seed-42 model for inference...")
     torch.manual_seed(CFG.base_seed)
     save_m = ImprovedWordGCN(num_words, CFG.hidden_dim, CFG.dropout, CFG.residual_alpha).to(device)
@@ -210,8 +207,8 @@ def main():
         "threshold":     thr["t"],
     }, TUNED_MODEL_DIR / "textgcn_tuned.pt")
 
-    print(f"\n✅ Artifacts → {TUNED_MODEL_DIR}")
-    print(f"✅ Metrics   → {REPORTS_DIR / 'metrics_textgcn_tuned.csv'}")
+    print(f"\nArtifacts saved to {TUNED_MODEL_DIR}")
+    print(f"Metrics saved to {REPORTS_DIR / 'metrics_textgcn_tuned.csv'}")
 
 
 if __name__ == "__main__":

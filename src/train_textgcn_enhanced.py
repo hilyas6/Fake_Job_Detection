@@ -18,9 +18,7 @@ from sklearn.metrics import f1_score, precision_score, recall_score
 
 from src.config import PATHS, CFG
 
-# -----------------------------
 # Tokenization
-# -----------------------------
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 
 
@@ -30,9 +28,8 @@ def tokenize(text: str):
     return TOKEN_RE.findall(text.lower())
 
 
-# -----------------------------
-# Build PMI graph
-# -----------------------------
+# PMI graph: counts word-pair co-occurrences in a sliding window, then
+# computes pointwise mutual information (PMI) as edge weights
 def build_pmi_graph(tokenized_docs, vocab_index, window_size=20, pmi_threshold=0.0):
     word_window_count = Counter()
     pair_count = Counter()
@@ -79,6 +76,7 @@ def build_pmi_graph(tokenized_docs, vocab_index, window_size=20, pmi_threshold=0
     return rows, cols, vals, num_words
 
 
+# Symmetric normalisation D^{-1/2} A D^{-1/2} with added self-loops
 def normalize_sparse_adj(rows, cols, vals, n):
     rows = rows + list(range(n))
     cols = cols + list(range(n))
@@ -100,17 +98,8 @@ def normalize_sparse_adj(rows, cols, vals, n):
     return A_norm
 
 
-# -----------------------------
-# Enhanced Model - BASED ON YOUR WORKING ORIGINAL
-# -----------------------------
+# 3-layer GCN with residual blending between raw embeddings and learned representations
 class ImprovedWordGCN(nn.Module):
-    """
-    Based on your original working model with strategic improvements:
-    1. One extra GCN layer (3 instead of 2)
-    2. Slightly larger hidden dim
-    3. Better MLP classifier
-    """
-
     def __init__(self, num_words: int, hidden_dim=300, dropout=0.35, residual_alpha=0.7):
         super().__init__()
         self.emb = nn.Embedding(num_words, hidden_dim)
@@ -119,14 +108,12 @@ class ImprovedWordGCN(nn.Module):
         self.dropout = dropout
         self.residual_alpha = residual_alpha
 
-        # Three GCN layers (original had 2)
         self.lin1 = nn.Linear(hidden_dim, hidden_dim, bias=False)
         self.lin2 = nn.Linear(hidden_dim, hidden_dim, bias=False)
         self.lin3 = nn.Linear(hidden_dim, hidden_dim, bias=False)
 
         self.norm = nn.LayerNorm(hidden_dim)
 
-        # Improved MLP (original had 1 layer, now 2)
         self.mlp = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
@@ -140,60 +127,49 @@ class ImprovedWordGCN(nn.Module):
     def gcn(self, A_norm):
         H0 = self.emb.weight  # (V, d)
 
-        # Layer 1
         H = torch.sparse.mm(A_norm, H0)
         H = self.lin1(H)
         H = F.relu(H)
         H = F.dropout(H, p=self.dropout, training=self.training)
 
-        # Layer 2
         H = torch.sparse.mm(A_norm, H)
         H = self.lin2(H)
         H = F.relu(H)
         H = F.dropout(H, p=self.dropout, training=self.training)
 
-        # Layer 3 (NEW)
         H = torch.sparse.mm(A_norm, H)
         H = self.lin3(H)
         H = F.relu(H)
 
-        # Residual connection
+        # blend raw embeddings with learned graph representations
         H = (1.0 - self.residual_alpha) * H0 + self.residual_alpha * H
-        return self.norm(H)  # (V, d)
+        return self.norm(H)
 
     def forward(self, A_norm, X_tfidf_sparse):
-        word_H = self.gcn(A_norm)  # (V, d)
-        doc_H = torch.sparse.mm(X_tfidf_sparse, word_H)  # (N, d)
-        doc_H0 = torch.sparse.mm(X_tfidf_sparse, self.emb.weight)  # (N, d)
+        word_H = self.gcn(A_norm)                              # (V, d)
+        doc_H = torch.sparse.mm(X_tfidf_sparse, word_H)       # (N, d)
+        doc_H0 = torch.sparse.mm(X_tfidf_sparse, self.emb.weight)
         doc_H = doc_H + doc_H0
         doc_H = F.dropout(doc_H, p=self.dropout, training=self.training)
         doc_H = self.mlp(doc_H)
-        logits = self.classifier(doc_H)  # (N, 2)
-        return logits
+        return self.classifier(doc_H)
 
 
-# -----------------------------
-# Config - CLOSE TO ORIGINAL
-# -----------------------------
 @dataclass
 class TrainConfig:
-    hidden_dim: int = 300  # Slightly larger than original 256
+    hidden_dim: int = 300
     dropout: float = 0.35
     lr: float = 3e-3
     weight_decay: float = 1e-5
     epochs: int = 100
     patience: int = 15
     label_smoothing: float = 0.05
-
     window_size: int = 20
     pmi_threshold: float = 0.0
     max_features: int = 40000
     residual_alpha: float = 0.7
 
 
-# -----------------------------
-# Utilities
-# -----------------------------
 def load_splits():
     with open(PATHS.data_processed / "splits.json", "r", encoding="utf-8") as f:
         return json.load(f)
@@ -251,12 +227,12 @@ def main():
     val_df = subset_by_ids(em, splits["val_ids"])
     test_df = subset_by_ids(em, splits["test_ids"])
 
-    # TF-IDF - with trigrams for better pattern capture
+    # TF-IDF with trigrams for better phrase-level pattern capture
     vec = TfidfVectorizer(
         tokenizer=tokenize,
         preprocessor=None,
         token_pattern=None,
-        ngram_range=(1, 3),  # IMPROVED: trigrams instead of bigrams
+        ngram_range=(1, 3),
         min_df=2,
         max_df=0.9,
         sublinear_tf=True,
@@ -273,7 +249,6 @@ def main():
     num_words = len(vocab)
     print(f"Vocab size: {num_words}")
 
-    # PMI graph
     tokenized_train = [tokenize(t) for t in train_df["text"].tolist()]
     rows, cols, vals, n = build_pmi_graph(
         tokenized_train, vocab,
@@ -283,7 +258,6 @@ def main():
     A_norm = normalize_sparse_adj(rows, cols, vals, n).to(device)
     print(f"PMI edges: {len(vals)}")
 
-    # Convert to torch sparse
     X_train = scipy_to_torch_sparse(X_train_s).to(device)
     X_val = scipy_to_torch_sparse(X_val_s).to(device)
     X_test = scipy_to_torch_sparse(X_test_s).to(device)
@@ -293,16 +267,14 @@ def main():
     y_val = torch.tensor(val_df["fraudulent"].astype(int).values, dtype=torch.long, device=device)
     y_test = torch.tensor(test_df["fraudulent"].astype(int).values, dtype=torch.long, device=device)
 
-    # Class weights - SAME AS ORIGINAL
+    # class weights to handle the ~22:1 real/fake imbalance
     pos = (y_train == 1).sum().item()
     neg = (y_train == 0).sum().item()
-    w0 = 1.0
     w1 = math.sqrt(neg / max(pos, 1))
-    class_weights = torch.tensor([w0, w1], dtype=torch.float32, device=device)
+    class_weights = torch.tensor([1.0, w1], dtype=torch.float32, device=device)
     print(f"Class distribution: neg={neg}, pos={pos}")
     print(f"Class weights: {class_weights.tolist()}")
 
-    # Model
     model = ImprovedWordGCN(
         num_words=num_words,
         hidden_dim=cfg.hidden_dim,
@@ -333,8 +305,7 @@ def main():
         val_f1, val_p, val_r = eval_split(model, A_norm, X_val, y_val)
 
         if epoch % 5 == 0 or epoch == 1:
-            print(
-                f"Epoch {epoch:03d} | loss={loss.item():.4f} | val_f1={val_f1:.4f} val_p={val_p:.4f} val_r={val_r:.4f}")
+            print(f"Epoch {epoch:03d} | loss={loss.item():.4f} | val_f1={val_f1:.4f} val_p={val_p:.4f} val_r={val_r:.4f}")
 
         if val_f1 > best_val_f1 + 1e-4:
             best_val_f1 = val_f1
@@ -346,28 +317,24 @@ def main():
                 print("Early stopping.")
                 break
 
-    # Load best
     if best_state is not None:
         model.load_state_dict(best_state)
 
-    # Find optimal threshold
     best_threshold = find_best_threshold(model, A_norm, X_val, y_val)
     test_f1, test_p, test_r = eval_split(
         model, A_norm, X_test, y_test, threshold=best_threshold["threshold"]
     )
 
-    print(f"\n✅ EMSCAD TEST | F1={test_f1:.4f} Precision={test_p:.4f} Recall={test_r:.4f} "
-          f"(threshold={best_threshold['threshold']:.2f})")
+    print(f"Test: F1={test_f1:.4f} P={test_p:.4f} R={test_r:.4f} threshold={best_threshold['threshold']:.2f}")
 
-    # OpenDataBay evaluation
+    # OpenBay evaluation (out-of-distribution)
     model.eval()
     with torch.no_grad():
         ob_logits = model(A_norm, X_ob)
         ob_probs = F.softmax(ob_logits, dim=1)[:, 1].cpu().numpy()
         ob_pred = (ob_probs >= best_threshold["threshold"]).astype(int)
         openbay_recall = float(np.mean(ob_pred == 1))
-        print(f"✅ OpenDataBay | recall={openbay_recall:.4f} | "
-              f"mean_prob={ob_probs.mean():.4f} median_prob={np.median(ob_probs):.4f}")
+        print(f"OpenBay: recall={openbay_recall:.4f} mean={ob_probs.mean():.4f} median={np.median(ob_probs):.4f}")
 
     # Save artifacts
     joblib.dump(vec, PATHS.models_textgcn / "vectorizer_improved.joblib")
@@ -394,12 +361,13 @@ def main():
         "emscad_test_recall": float(test_r),
         "openbay_recall": float(openbay_recall),
         "openbay_mean_prob": float(ob_probs.mean()),
+        "openbay_median_prob": float(np.median(ob_probs)),
         "vocab_size": int(num_words),
         "threshold": float(best_threshold["threshold"]),
     }
 
     pd.DataFrame([metrics]).to_csv(PATHS.reports / "metrics_textgcn_improved.csv", index=False)
-    print(f"\n✅ Saved improved model to {PATHS.models_textgcn}/")
+    print(f"Saved to {PATHS.models_textgcn}/")
 
 
 if __name__ == "__main__":

@@ -50,10 +50,11 @@ def main() -> None:
 
     pos = int((y_train == 1).sum())
     neg = int((y_train == 0).sum())
-    spw = float(neg / max(pos, 1))
+    spw = float(neg / max(pos, 1))  # scale_pos_weight for tree models
 
     joblib.dump(vec, MODELS_DIR / "vectorizer.joblib")
 
+    # Each model has a small grid of candidates; the one with the best val F1 is kept
     candidates = {
         "logistic_regression": [
             LogisticRegression(C=c, class_weight="balanced", solver="saga", max_iter=3000, n_jobs=-1)
@@ -138,7 +139,7 @@ def main() -> None:
         }
         save_metrics_row(name, metrics)
         summary.append({"model": name, **metrics})
-        print(f"Saved tuned {name}")
+        print(f"Saved {name}")
 
     pd.DataFrame(summary).sort_values("emscad_test_f1", ascending=False).to_csv(
         REPORTS_DIR / "metrics_classical_models.csv", index=False

@@ -1,21 +1,21 @@
 """
-TextGCN Hyperparameter Tuning – Final Clean Script
-===================================================
+TextGCN Hyperparameter Tuning
+==============================
 Baseline (textgcn_improved):
     EMSCAD F1 = 0.8352  |  Precision = 0.8769  |  Recall = 0.7972
     OpenBay Recall = 0.9583  |  Vocab = 40,000  |  Threshold = 0.48
 
-This script covers the 7 key tuning strategies explored for the BSc project report:
-    1. LR Scheduler      – AdamW + Cosine Annealing
-    2. Focal Loss        – Alternative loss for class imbalance
-    3. Architecture      – Larger hidden dimension (384)
-    4. PMI Window        – Smaller co-occurrence window (15 vs 20)
-    5. SWA               – Stochastic Weight Averaging (failure case)
-    6. Ensemble (x3)     – 3-seed ensemble, baseline graph
-    7. Ensemble + Window – 3-seed ensemble + window=15  ← WINNER
+Tuning strategies explored:
+    1. LR Scheduler      - AdamW + Cosine Annealing
+    2. Focal Loss        - Alternative loss for class imbalance
+    3. Architecture      - Larger hidden dimension (384)
+    4. PMI Window        - Smaller co-occurrence window (15 vs 20)
+    5. SWA               - Stochastic Weight Averaging (failure case)
+    6. Ensemble (x3)     - 3-seed ensemble, baseline graph
+    7. Ensemble + Window - 3-seed ensemble + window=15  (WINNER)
 
-All results are appended to:  reports/tuned/textgcn_tuning_results_final.csv
-Winning artifacts saved to:   models/tuned/textgcn_tuned/
+Results saved to:  reports/tuned/textgcn_tuning_results_final.csv
+Winning artifacts: models/tuned/textgcn_tuned/
 """
 from __future__ import annotations
 
@@ -37,7 +37,6 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import f1_score, precision_score, recall_score
 from torch.optim.swa_utils import AveragedModel, SWALR
 
-# ── Paths ──────────────────────────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parents[1]
 DATA_PROCESSED = ROOT / "data" / "processed"
 TUNED_MODEL_DIR = ROOT / "models" / "tuned" / "textgcn_tuned"
@@ -52,14 +51,12 @@ BASELINE_OB_RECALL = 0.9583
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 
 
-# ── Tokenizer ──────────────────────────────────────────────────────────────────
 def tokenize(text: str) -> list[str]:
     if not isinstance(text, str):
         return []
     return TOKEN_RE.findall(text.lower())
 
 
-# ── Graph construction ─────────────────────────────────────────────────────────
 def build_pmi_graph(tokenized_docs, vocab_index, window_size=20, pmi_threshold=0.0):
     """Compute PMI between word pairs using a sliding window over training documents."""
     word_count: Counter = Counter()
@@ -94,7 +91,7 @@ def build_pmi_graph(tokenized_docs, vocab_index, window_size=20, pmi_threshold=0
 
 
 def normalize_adj(rows, cols, vals, n):
-    """Symmetric normalisation: D^{-1/2} A D^{-1/2}, with self-loops added."""
+    """Symmetric normalisation D^{-1/2} A D^{-1/2} with self-loops added."""
     rows = rows + list(range(n))
     cols = cols + list(range(n))
     vals = vals + [1.0] * n
@@ -116,12 +113,8 @@ def to_sparse(X):
     return torch.sparse_coo_tensor(idx, val, X.shape).coalesce()
 
 
-# ── Model ──────────────────────────────────────────────────────────────────────
+# 3-layer GCN with residual blending, same architecture as the baseline model
 class ImprovedWordGCN(nn.Module):
-    """
-    3-layer GCN with residual blending for fake job detection.
-    Identical architecture to the baseline textgcn_improved model.
-    """
     def __init__(self, num_words: int, hidden_dim: int = 300,
                  dropout: float = 0.35, residual_alpha: float = 0.7):
         super().__init__()
@@ -157,7 +150,6 @@ class ImprovedWordGCN(nn.Module):
         return self.classifier(self.mlp(doc))
 
 
-# ── Evaluation helpers ─────────────────────────────────────────────────────────
 @torch.no_grad()
 def get_probs(model, A, X) -> np.ndarray:
     model.eval()
@@ -180,48 +172,37 @@ def best_threshold(probs: np.ndarray, y: np.ndarray) -> dict:
     return best
 
 
-# ── Trial configuration ────────────────────────────────────────────────────────
 @dataclass
 class TrialConfig:
     name: str
-    # Architecture
     hidden_dim: int = 300
     dropout: float = 0.35
     residual_alpha: float = 0.7
-    # Optimiser
     lr: float = 3e-3
     weight_decay: float = 1e-5
     optimizer: str = "adam"        # "adam" | "adamw"
-    # Scheduler
     scheduler: str = "none"        # "none" | "cosine" | "swa"
     swa_start: int = 80
     swa_lr: float = 5e-4
-    # Loss
     loss: str = "ce"               # "ce" | "focal"
     focal_alpha: float = 0.75
     focal_gamma: float = 2.0
-    # Training
     epochs: int = 200
     patience: int = 25
     label_smoothing: float = 0.05
-    # Class weight
     class_weight: str = "sqrt"     # "sqrt" = sqrt(neg/pos)
-    # Graph / vocab
     window_size: int = 20
     max_features: int = 40000
-    # Ensemble
     n_seeds: int = 1
     base_seed: int = 42
 
 
-# ── Core training function ─────────────────────────────────────────────────────
 def train_single(cfg: TrialConfig, A, X_tr, X_va, X_te, X_ob,
                  y_tr, y_va, num_words: int, device, seed_offset: int = 0):
     """Train one model and return (val_probs, test_probs, ob_probs, best_val_f1)."""
     torch.manual_seed(cfg.base_seed + seed_offset)
     np.random.seed(cfg.base_seed + seed_offset)
 
-    # Class weights
     pos = int((y_tr == 1).sum())
     neg = int((y_tr == 0).sum())
     w1 = math.sqrt(neg / max(pos, 1)) if cfg.class_weight == "sqrt" else 1.0
@@ -234,7 +215,6 @@ def train_single(cfg: TrialConfig, A, X_tr, X_va, X_te, X_ob,
     else:
         opt = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
-    # Scheduler setup
     cosine_sched = None
     swa_model = None
     swa_sched = None
@@ -288,7 +268,6 @@ def train_single(cfg: TrialConfig, A, X_tr, X_va, X_te, X_ob,
             if patience_left <= 0:
                 break
 
-    # Use SWA model for evaluation if applicable
     eval_model = swa_model if (cfg.scheduler == "swa" and swa_model is not None) else model
     if best_state is not None and cfg.scheduler != "swa":
         model.load_state_dict(best_state)
@@ -299,9 +278,8 @@ def train_single(cfg: TrialConfig, A, X_tr, X_va, X_te, X_ob,
             best_val_f1)
 
 
-# ── Full trial runner ──────────────────────────────────────────────────────────
 def run_trial(cfg: TrialConfig, bundle: dict, device) -> dict:
-    print(f"\n{'='*60}\n  Trial: {cfg.name}  (n_seeds={cfg.n_seeds})\n{'='*60}")
+    print(f"\nTrial: {cfg.name}  (n_seeds={cfg.n_seeds})")
     t0 = time.time()
 
     train_df = bundle["train"]
@@ -309,7 +287,6 @@ def run_trial(cfg: TrialConfig, bundle: dict, device) -> dict:
     test_df = bundle["test"]
     ob_df = bundle["ob"]
 
-    # TF-IDF vectorizer
     vec = TfidfVectorizer(
         tokenizer=tokenize, preprocessor=None, token_pattern=None,
         ngram_range=(1, 3), min_df=2, max_df=0.9,
@@ -322,9 +299,8 @@ def run_trial(cfg: TrialConfig, bundle: dict, device) -> dict:
 
     vocab = vec.vocabulary_
     num_words = len(vocab)
-    print(f"  Vocab: {num_words}  |  PMI window: {cfg.window_size}")
+    print(f"  Vocab: {num_words}  PMI window: {cfg.window_size}")
 
-    # PMI graph
     tok_train = [tokenize(t) for t in train_df["text"].tolist()]
     rows, cols, vals, n = build_pmi_graph(tok_train, vocab, window_size=cfg.window_size)
     A = normalize_adj(rows, cols, vals, n).to(device)
@@ -341,23 +317,22 @@ def run_trial(cfg: TrialConfig, bundle: dict, device) -> dict:
     y_va_np = y_va.cpu().numpy()
     y_te_np = y_te.cpu().numpy()
 
-    # Train ensemble (n_seeds models, average probabilities)
+    # run n_seeds models and average their probabilities
     all_val, all_test, all_ob = [], [], []
     for s in range(cfg.n_seeds):
-        print(f"  → Training seed {cfg.base_seed + s}")
+        print(f"  seed {cfg.base_seed + s}")
         vp, tp, op, bvf1 = train_single(
             cfg, A, X_tr, X_va, X_te, X_ob, y_tr, y_va, num_words, device, seed_offset=s
         )
         all_val.append(vp)
         all_test.append(tp)
         all_ob.append(op)
-        print(f"    val_f1 = {bvf1:.4f}")
+        print(f"    val_f1={bvf1:.4f}")
 
     val_probs = np.mean(all_val, axis=0)
     test_probs = np.mean(all_test, axis=0)
     ob_probs = np.mean(all_ob, axis=0)
 
-    # Threshold tuned on validation set
     thr = best_threshold(val_probs, y_va_np)
     test_f1, test_p, test_r = eval_at(test_probs, y_te_np, thr["t"])
 
@@ -367,10 +342,9 @@ def run_trial(cfg: TrialConfig, bundle: dict, device) -> dict:
     elapsed = time.time() - t0
     beats = test_f1 > BASELINE_F1
 
-    print(f"\n  RESULT | F1={test_f1:.4f}  P={test_p:.4f}  R={test_r:.4f} "
-          f"| OB_recall={ob_recall:.4f} | thr={thr['t']:.2f} | {elapsed:.0f}s")
-    print(f"  {'✅ BEATS BASELINE!' if beats else '❌ Below baseline'}"
-          f"  (baseline F1={BASELINE_F1:.4f})")
+    print(f"  Result: F1={test_f1:.4f} P={test_p:.4f} R={test_r:.4f} "
+          f"OB={ob_recall:.4f} thr={thr['t']:.2f} ({elapsed:.0f}s)")
+    print(f"  {'Beats baseline' if beats else 'Below baseline'} (baseline F1={BASELINE_F1:.4f})")
 
     result = {
         "trial": cfg.name,
@@ -382,7 +356,6 @@ def run_trial(cfg: TrialConfig, bundle: dict, device) -> dict:
         "threshold": round(thr["t"], 2),
         "beats_baseline": beats,
         "elapsed_s": round(elapsed, 1),
-        # Config snapshot
         "hidden_dim": cfg.hidden_dim,
         "dropout": cfg.dropout,
         "optimizer": cfg.optimizer,
@@ -396,7 +369,7 @@ def run_trial(cfg: TrialConfig, bundle: dict, device) -> dict:
         "n_seeds": cfg.n_seeds,
     }
 
-    # Save artifacts if best so far
+    # save artifacts if this trial beats the baseline
     if beats:
         TUNED_MODEL_DIR.mkdir(parents=True, exist_ok=True)
         inv_vocab = {i: t for t, i in vocab.items()}
@@ -408,7 +381,7 @@ def run_trial(cfg: TrialConfig, bundle: dict, device) -> dict:
             "inv_vocab": inv_vocab,
         }, TUNED_MODEL_DIR / "graph_cache_tuned.pt")
 
-        # Save the seed-42 model for single-model serving
+        # re-train seed-42 model for single-model inference
         torch.manual_seed(cfg.base_seed)
         save_m = ImprovedWordGCN(num_words, cfg.hidden_dim, cfg.dropout, cfg.residual_alpha).to(device)
         pos_n = int((y_tr == 1).sum()); neg_n = int((y_tr == 0).sum())
@@ -443,21 +416,19 @@ def run_trial(cfg: TrialConfig, bundle: dict, device) -> dict:
             "trial": cfg.name,
             "threshold": thr["t"],
         }, TUNED_MODEL_DIR / "textgcn_tuned.pt")
-        print(f"  💾 Artifacts saved → {TUNED_MODEL_DIR}")
+        print(f"  Artifacts saved to {TUNED_MODEL_DIR}")
 
     return result
 
 
-# ── Trial definitions ──────────────────────────────────────────────────────────
 def build_trials() -> list[TrialConfig]:
     """
-    7 trials covering the most important tuning dimensions for the BSc report.
-    Each trial isolates one key change from the baseline configuration.
+    Seven trials, each isolating one tuning change from the baseline.
     """
     return [
-        # 1. LR Scheduler: AdamW + Cosine Annealing
-        #    Hypothesis: decaying LR lets the model refine at lower learning rates.
-        #    Result: early stopping at epoch ~45; cosine schedule decays LR too fast.
+        # 1. AdamW + Cosine LR scheduler
+        #    Hypothesis: decaying LR helps the model refine at lower learning rates.
+        #    Result: early stopping at ~epoch 45; cosine decay was too aggressive.
         TrialConfig(
             name="cosine_scheduler",
             optimizer="adamw", scheduler="cosine",
@@ -466,7 +437,7 @@ def build_trials() -> list[TrialConfig]:
         ),
 
         # 2. Focal Loss (alpha=0.75, gamma=2.0)
-        #    Hypothesis: down-weights easy examples, focuses on hard mis-classifications.
+        #    Hypothesis: down-weights easy negatives, focuses on hard misclassifications.
         #    Result: training loss collapsed to ~0; model memorised training labels.
         TrialConfig(
             name="focal_loss",
@@ -475,9 +446,9 @@ def build_trials() -> list[TrialConfig]:
             epochs=200, patience=25,
         ),
 
-        # 3. Larger Architecture: hidden_dim=384, dropout=0.30
-        #    Hypothesis: more parameters capture richer graph representations.
-        #    Result: no improvement; class imbalance limits what capacity can help.
+        # 3. Larger hidden dimension (384)
+        #    Hypothesis: more capacity captures richer graph representations.
+        #    Result: no improvement; class imbalance limits what extra capacity can help.
         TrialConfig(
             name="hidden_dim_384",
             hidden_dim=384, dropout=0.30,
@@ -485,9 +456,9 @@ def build_trials() -> list[TrialConfig]:
             lr=2e-3, epochs=200, patience=25,
         ),
 
-        # 4. Smaller PMI Window: window=15 (baseline=20)
+        # 4. Smaller PMI window (15 vs baseline 20)
         #    Hypothesis: tighter windows capture short-range fraud phrases more precisely.
-        #    Result: best single-model result (F1=0.8309), close but below baseline.
+        #    Result: best single-model result (F1=0.8309), just below baseline.
         TrialConfig(
             name="pmi_window_15",
             window_size=15,
@@ -496,8 +467,8 @@ def build_trials() -> list[TrialConfig]:
         ),
 
         # 5. Stochastic Weight Averaging (SWA)
-        #    Hypothesis: averaging weights from late checkpoints finds a flatter minimum.
-        #    Result: FAILED — LayerNorm incompatibility caused model to collapse
+        #    Hypothesis: averaging late-stage weights finds a flatter minimum.
+        #    Result: FAILED - LayerNorm incompatibility caused collapse
         #            (recall=1.0, precision=0.045, F1=0.086).
         TrialConfig(
             name="swa",
@@ -506,10 +477,10 @@ def build_trials() -> list[TrialConfig]:
             epochs=200, patience=40,
         ),
 
-        # 6. Ensemble: 3 seeds, baseline window=20
+        # 6. 3-seed ensemble, baseline window=20
         #    Hypothesis: averaging predictions from independently initialised models
-        #               cancels out individual errors.
-        #    Result: F1=0.8248; correlated errors across seeds limited the gain.
+        #                cancels out individual errors.
+        #    Result: F1=0.8248; correlated errors limited the gain.
         TrialConfig(
             name="ensemble_3seeds",
             n_seeds=3,
@@ -517,10 +488,10 @@ def build_trials() -> list[TrialConfig]:
             epochs=200, patience=25,
         ),
 
-        # 7. Ensemble + Window=15  ← WINNER
-        #    Hypothesis: combining the best graph change (window=15) with ensemble
-        #               averaging produces a synergistic improvement.
-        #    Result: F1=0.8390, Precision=0.9032 — beats baseline F1 of 0.8352.
+        # 7. 3-seed ensemble + window=15  (WINNER)
+        #    Hypothesis: combining the best graph change with ensemble averaging
+        #                produces a synergistic improvement.
+        #    Result: F1=0.8390, Precision=0.9032 - beats baseline F1 of 0.8352.
         TrialConfig(
             name="ensemble_3seeds_window15",
             n_seeds=3, window_size=15,
@@ -530,7 +501,6 @@ def build_trials() -> list[TrialConfig]:
     ]
 
 
-# ── Data loading ───────────────────────────────────────────────────────────────
 def load_data() -> dict:
     em = pd.read_csv(DATA_PROCESSED / "emscad.csv")
     ob = pd.read_csv(DATA_PROCESSED / "openbay.csv")
@@ -548,7 +518,6 @@ def load_data() -> dict:
     }
 
 
-# ── Main ───────────────────────────────────────────────────────────────────────
 def main():
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     TUNED_MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -557,11 +526,11 @@ def main():
     print(f"Device: {device}")
 
     bundle = load_data()
-    print(f"Data  — train: {len(bundle['train'])}  val: {len(bundle['val'])}"
-          f"  test: {len(bundle['test'])}  openbay: {len(bundle['ob'])}")
+    print(f"Train: {len(bundle['train'])}  Val: {len(bundle['val'])}"
+          f"  Test: {len(bundle['test'])}  OpenBay: {len(bundle['ob'])}")
 
     trials = build_trials()
-    print(f"\nRunning {len(trials)} trials  |  Baseline F1 = {BASELINE_F1:.4f}\n")
+    print(f"\nRunning {len(trials)} trials  |  Baseline F1 = {BASELINE_F1:.4f}")
 
     all_results, best_f1 = [], BASELINE_F1
 
@@ -571,7 +540,6 @@ def main():
             result = run_trial(cfg, bundle, device)
             all_results.append(result)
 
-            # Append to CSV
             row_df = pd.DataFrame([result])
             if RESULTS_CSV.exists():
                 row_df = pd.concat([pd.read_csv(RESULTS_CSV), row_df], ignore_index=True)
@@ -579,26 +547,24 @@ def main():
 
             if result["emscad_test_f1"] > best_f1:
                 best_f1 = result["emscad_test_f1"]
-                print(f"\n  🏆 NEW BEST: {cfg.name}  F1={best_f1:.4f}")
+                print(f"  New best: {cfg.name}  F1={best_f1:.4f}")
 
         except Exception as exc:
             import traceback
-            print(f"  ⚠️  {cfg.name} failed: {exc}")
+            print(f"  {cfg.name} failed: {exc}")
             traceback.print_exc()
 
-    # ── Final summary ──────────────────────────────────────────────────────────
-    print(f"\n{'='*60}  TUNING COMPLETE")
+    print("\nTuning complete.")
     if all_results:
         df = pd.DataFrame(all_results).sort_values("emscad_test_f1", ascending=False)
         cols = ["trial", "emscad_test_f1", "emscad_test_precision",
                 "emscad_test_recall", "openbay_recall", "threshold",
                 "n_seeds", "beats_baseline"]
         print(df[cols].to_string(index=False))
-        print(f"\nBaseline:  F1={BASELINE_F1:.4f}  P={BASELINE_PRECISION:.4f}"
-              f"  R={BASELINE_RECALL:.4f}  OB={BASELINE_OB_RECALL:.4f}")
+        print(f"\nBaseline: F1={BASELINE_F1:.4f} P={BASELINE_PRECISION:.4f}"
+              f" R={BASELINE_RECALL:.4f} OB={BASELINE_OB_RECALL:.4f}")
         print(f"Best found: F1={best_f1:.4f}")
 
-        # Save final metrics for the winning model
         best_row = df.iloc[0]
         if best_row["beats_baseline"]:
             pd.DataFrame([{
@@ -611,10 +577,10 @@ def main():
                 "threshold": best_row["threshold"],
                 "trial": best_row["trial"],
             }]).to_csv(REPORTS_DIR / "metrics_textgcn_tuned.csv", index=False)
-            print(f"\n✅ Winning metrics saved → {REPORTS_DIR / 'metrics_textgcn_tuned.csv'}")
-            print(f"✅ Model artifacts     saved → {TUNED_MODEL_DIR}")
+            print(f"Winning metrics saved to {REPORTS_DIR / 'metrics_textgcn_tuned.csv'}")
+            print(f"Model artifacts saved to {TUNED_MODEL_DIR}")
         else:
-            print("\n⚠️  No trial beat the baseline in this run.")
+            print("No trial beat the baseline in this run.")
 
 
 if __name__ == "__main__":

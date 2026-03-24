@@ -127,10 +127,10 @@ def main():
             PATHS.reports / f"metrics_{name}.csv", index=False
         )
         rows.append(metrics)
-        print(f"✅ Saved {name} + metrics.")
+        print(f"Saved {name}")
 
     pd.DataFrame(rows).to_csv(PATHS.reports / "metrics_classical_models.csv", index=False)
-    print(f"✅ Saved summary to {PATHS.reports / 'metrics_classical_models.csv'}")
+    print(f"Summary saved to {PATHS.reports / 'metrics_classical_models.csv'}")
 
 
 if __name__ == "__main__":

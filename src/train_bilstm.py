@@ -57,14 +57,16 @@ class TextDataset(Dataset):
 
 
 class BiLSTMClassifier(nn.Module):
-    def __init__(self, vocab_size, embed_dim, hidden_dim, dropout):
+    def __init__(self, vocab_size, embed_dim, hidden_dim, dropout, num_layers=1):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=0)
         self.lstm = nn.LSTM(
             embed_dim,
             hidden_dim,
+            num_layers=num_layers,
             batch_first=True,
             bidirectional=True,
+            dropout=dropout if num_layers > 1 else 0.0,
         )
         self.dropout = nn.Dropout(dropout)
         self.fc = nn.Linear(hidden_dim * 2, 1)
@@ -104,6 +106,7 @@ def main():
 
     cfg = TrainConfig()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Device: {device}")
 
     em = pd.read_csv(PATHS.data_processed / "emscad.csv")
     ob = pd.read_csv(PATHS.data_processed / "openbay.csv")
@@ -115,6 +118,7 @@ def main():
 
     train_tokens = [tokenize(t) for t in train_df["text"].tolist()]
     vocab = build_vocab(train_tokens, min_freq=cfg.min_freq, max_size=cfg.max_vocab)
+    print(f"Vocab size: {len(vocab)}")
 
     train_seq = [encode_tokens(tokens, vocab) for tokens in train_tokens]
     val_seq = build_sequences(val_df["text"].tolist(), vocab)
@@ -142,6 +146,7 @@ def main():
         dropout=cfg.dropout,
     ).to(device)
 
+    # class weight to handle the fake/real imbalance
     pos = float((y_train == 1).sum())
     neg = float((y_train == 0).sum())
     pos_weight = torch.tensor([neg / max(pos, 1.0)], device=device)
@@ -213,13 +218,16 @@ def main():
         {
             "state_dict": model.state_dict(),
             "vocab": vocab,
-            "config": cfg.__dict__,
+            "config": {
+                **cfg.__dict__,
+                "vocab_size": len(vocab),
+                "num_layers": 1,
+            },
         },
         PATHS.models_comparison / "bilstm.pt",
     )
     pd.DataFrame([metrics]).to_csv(PATHS.reports / "metrics_bilstm.csv", index=False)
-
-    print(f"✅ Saved Bi-LSTM model to {PATHS.models_comparison}/bilstm.pt")
+    print(f"Saved to {PATHS.models_comparison}/bilstm.pt")
 
 
 if __name__ == "__main__":

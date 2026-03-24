@@ -91,6 +91,7 @@ def fit_and_eval(cfg, seq_data, y_data, loaders, device):
         dropout=cfg["dropout"],
         num_layers=cfg["num_layers"],
     ).to(device)
+
     pos = float((y_data["train"] == 1).sum())
     neg = float((y_data["train"] == 0).sum())
     criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([neg / max(pos, 1.0)], device=device))
@@ -99,18 +100,14 @@ def fit_and_eval(cfg, seq_data, y_data, loaders, device):
         lr=cfg["lr"],
         weight_decay=cfg["weight_decay"],
     )
-    # More aggressive scheduler for faster convergence
+    # reduce LR when val F1 stops improving
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer,
-        mode="max",
-        factor=0.5,
-        patience=1,
-        min_lr=1e-6,
+        optimizer, mode="max", factor=0.5, patience=1, min_lr=1e-6,
     )
 
     best_f1 = -1.0
     best_state = None
-    patience = 2  # Reduced from 3 for faster training
+    patience = 2
     patience_counter = patience
 
     for epoch in range(cfg["epochs"]):
@@ -134,7 +131,7 @@ def fit_and_eval(cfg, seq_data, y_data, loaders, device):
         else:
             patience_counter -= 1
             if patience_counter <= 0:
-                print(f"Early stopping at epoch {epoch + 1}")
+                print(f"  Early stopping at epoch {epoch + 1}")
                 break
 
     model.load_state_dict(best_state)
@@ -147,17 +144,15 @@ def main() -> None:
     np.random.seed(42)
     bundle = load_bundle()
 
-    # Use M1 GPU (MPS) if available, otherwise fall back to CUDA or CPU
     if torch.backends.mps.is_available():
         device = torch.device("mps")
     elif torch.cuda.is_available():
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
-    print(f"Using device: {device}")
+    print(f"Device: {device}")
 
-    # Tokenize once and cache
-    print("Tokenizing texts...")
+    print("Tokenizing...")
     train_tokens = [tokenize(t) for t in bundle.train_df["text"].tolist()]
     vocab = build_vocab(train_tokens, min_freq=2, max_size=50000)
     print(f"Vocab size: {len(vocab)}")
@@ -174,47 +169,22 @@ def main() -> None:
         "test": bundle.test_df["fraudulent"].astype(int).values,
     }
 
-    # Optimized hyperparameter grid - focusing on promising configurations
-    # Based on the original trials, we keep the best-performing ones and add slight variations
+    # three hyperparameter configurations to try
     trials = [
-        # Original first trial (baseline)
         {
-            "embed_dim": 200,
-            "hidden_dim": 128,
-            "dropout": 0.25,
-            "lr": 8e-4,
-            "epochs": 10,
-            "num_layers": 2,
-            "weight_decay": 1e-4,
-            "grad_clip": 1.0,
-            "max_len": 360,
-            "batch_size": 64,  # Increased from 32
+            "embed_dim": 200, "hidden_dim": 128, "dropout": 0.25,
+            "lr": 8e-4, "epochs": 10, "num_layers": 2,
+            "weight_decay": 1e-4, "grad_clip": 1.0, "max_len": 360, "batch_size": 64,
         },
-        # Enhanced version with better capacity
         {
-            "embed_dim": 256,
-            "hidden_dim": 160,
-            "dropout": 0.3,
-            "lr": 1e-3,
-            "epochs": 12,
-            "num_layers": 2,
-            "weight_decay": 1e-4,
-            "grad_clip": 1.0,
-            "max_len": 400,  # Balanced length
-            "batch_size": 64,
+            "embed_dim": 256, "hidden_dim": 160, "dropout": 0.3,
+            "lr": 1e-3, "epochs": 12, "num_layers": 2,
+            "weight_decay": 1e-4, "grad_clip": 1.0, "max_len": 400, "batch_size": 64,
         },
-        # Larger model with more regularization
         {
-            "embed_dim": 256,
-            "hidden_dim": 192,
-            "dropout": 0.35,
-            "lr": 7e-4,
-            "epochs": 12,
-            "num_layers": 2,
-            "weight_decay": 2e-4,
-            "grad_clip": 0.8,
-            "max_len": 420,
-            "batch_size": 48,  # Slightly smaller due to larger model
+            "embed_dim": 256, "hidden_dim": 192, "dropout": 0.35,
+            "lr": 7e-4, "epochs": 12, "num_layers": 2,
+            "weight_decay": 2e-4, "grad_clip": 0.8, "max_len": 420, "batch_size": 48,
         },
     ]
 
@@ -223,75 +193,58 @@ def main() -> None:
     best_f1 = -1.0
 
     for trial_idx, trial in enumerate(trials):
-        print(f"\n{'=' * 60}")
-        print(f"Trial {trial_idx + 1}/{len(trials)}")
-        print(f"Config: embed={trial['embed_dim']}, hidden={trial['hidden_dim']}, "
-              f"dropout={trial['dropout']}, lr={trial['lr']}, max_len={trial['max_len']}")
-        print(f"{'=' * 60}")
+        print(f"\nTrial {trial_idx + 1}/{len(trials)}: "
+              f"embed={trial['embed_dim']}, hidden={trial['hidden_dim']}, "
+              f"dropout={trial['dropout']}, lr={trial['lr']}")
 
         max_len = trial["max_len"]
         batch_size = trial["batch_size"]
         cfg = {**trial, "vocab_size": len(vocab)}
 
-        # Determine number of workers based on availability
         num_workers = 4 if device.type in ["cuda", "mps"] else 2
-        # Pin memory only beneficial for CUDA
         use_pin_memory = (device.type == "cuda")
 
         loaders = {
             "train": DataLoader(
                 TextDataset(seqs["train"], ys["train"], max_len),
-                batch_size=batch_size,
-                shuffle=True,
-                num_workers=num_workers,
-                pin_memory=use_pin_memory,
+                batch_size=batch_size, shuffle=True,
+                num_workers=num_workers, pin_memory=use_pin_memory,
             ),
             "val": DataLoader(
                 TextDataset(seqs["val"], ys["val"], max_len),
                 batch_size=batch_size * 2,
-                num_workers=num_workers,
-                pin_memory=use_pin_memory,
+                num_workers=num_workers, pin_memory=use_pin_memory,
             ),
             "test": DataLoader(
                 TextDataset(seqs["test"], ys["test"], max_len),
                 batch_size=batch_size * 2,
-                num_workers=num_workers,
-                pin_memory=use_pin_memory,
+                num_workers=num_workers, pin_memory=use_pin_memory,
             ),
             "ob": DataLoader(
                 TextDataset(seqs["ob"], None, max_len),
                 batch_size=batch_size * 2,
-                num_workers=num_workers,
-                pin_memory=use_pin_memory,
+                num_workers=num_workers, pin_memory=use_pin_memory,
             ),
         }
 
         model, val_f1 = fit_and_eval(cfg, seqs, ys, loaders, device)
-        print(f"Validation F1: {val_f1:.4f}")
+        print(f"  val_f1={val_f1:.4f}")
 
         if val_f1 > best_f1:
             best_f1 = val_f1
             best_model = model
             best_trial = cfg
             best_loaders = loaders
-            print(f"★ New best F1: {best_f1:.4f}")
+            print(f"  New best: {best_f1:.4f}")
 
-    print(f"\n{'=' * 60}")
-    print(f"Best validation F1: {best_f1:.4f}")
-    print(f"Best config: embed={best_trial['embed_dim']}, hidden={best_trial['hidden_dim']}")
-    print(f"{'=' * 60}")
+    print(f"\nBest val F1: {best_f1:.4f} (embed={best_trial['embed_dim']}, hidden={best_trial['hidden_dim']})")
 
-    # Final evaluation
     val_probs = predict_probs(best_model, best_loaders["val"], device)
     threshold = find_best_threshold(ys["val"], val_probs)["threshold"]
-    print(f"Optimal threshold: {threshold:.4f}")
 
     test_probs = predict_probs(best_model, best_loaders["test"], device)
     test = eval_at_threshold(ys["test"], test_probs, threshold)
-    print(f"\nTest Results:")
-    print(f"  F1: {test['f1']:.4f}")
-    print(f"  Precision: {test['precision']:.4f}")
-    print(f"  Recall: {test['recall']:.4f}")
+    print(f"Test: F1={test['f1']:.4f} P={test['precision']:.4f} R={test['recall']:.4f}")
 
     ob_probs = predict_probs(best_model, best_loaders["ob"], device)
 
@@ -299,7 +252,7 @@ def main() -> None:
         {"state_dict": best_model.state_dict(), "vocab": vocab, "config": best_trial},
         MODELS_DIR / "bilstm.pt",
     )
-    print(f"\nModel saved to {MODELS_DIR / 'bilstm.pt'}")
+    print(f"Saved to {MODELS_DIR / 'bilstm.pt'}")
 
     save_metrics_row(
         "bilstm",
@@ -311,7 +264,6 @@ def main() -> None:
             **openbay_metrics(ob_probs, threshold),
         },
     )
-    print("Metrics saved!")
 
 
 if __name__ == "__main__":

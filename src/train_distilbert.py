@@ -1,6 +1,5 @@
 # src/train_distilbert.py
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -22,16 +21,15 @@ from src.model_utils import (
 @dataclass
 class TrainConfig:
     model_name: str = "distilbert-base-uncased"
-    max_len: int = 128          # 256 -> 128 is a big speed boost on CPU/MPS
-    batch_size: int = 16        # M1 can often handle 16 at 128 tokens; reduce if OOM
+    max_len: int = 128
+    batch_size: int = 16
     lr: float = 2e-5
     epochs: int = 3
     patience: int = 2
-    use_amp: bool = True        # mixed precision on MPS/CUDA when available
+    use_amp: bool = True  # mixed precision on MPS/CUDA
 
 
 def get_device() -> torch.device:
-    # Prefer Apple GPU (MPS) on M1/M2, then CUDA, else CPU
     if torch.backends.mps.is_available() and torch.backends.mps.is_built():
         return torch.device("mps")
     if torch.cuda.is_available():
@@ -54,9 +52,8 @@ class TokenizedDataset(Dataset):
         return item
 
 
-
 def tokenize_texts(tokenizer, texts, max_len: int):
-    # Return lists (not torch tensors). Dynamic padding will happen in the DataLoader collator.
+    # padding is done per batch in the DataLoader collator, not here
     return tokenizer(
         texts,
         truncation=True,
@@ -66,20 +63,16 @@ def tokenize_texts(tokenizer, texts, max_len: int):
     )
 
 
-
 @torch.no_grad()
 def predict_probs(model, loader, device) -> np.ndarray:
     model.eval()
     probs = []
-
     for batch in loader:
-        labels = batch.pop("labels", None)  # may not exist for OpenBay
+        batch.pop("labels", None)
         batch = {k: v.to(device) for k, v in batch.items()}
-
         logits = model(**batch).logits
         prob = torch.softmax(logits, dim=1)[:, 1]
         probs.append(prob.detach().cpu().numpy())
-
     return np.concatenate(probs, axis=0)
 
 
@@ -89,10 +82,7 @@ def main():
 
     cfg = TrainConfig()
     device = get_device()
-    print(f"Using device: {device}")
-
-    # (Optional) helps avoid some MPS edge weirdness in older setups
-    # torch.set_float32_matmul_precision("high")  # PyTorch 2.x; safe if available
+    print(f"Device: {device}")
 
     em = pd.read_csv(PATHS.data_processed / "emscad.csv")
     ob = pd.read_csv(PATHS.data_processed / "openbay.csv")
@@ -103,17 +93,15 @@ def main():
     test_df = subset_by_ids(em, splits["test_ids"])
 
     tokenizer = AutoTokenizer.from_pretrained(cfg.model_name, use_fast=True)
-
     model = AutoModelForSequenceClassification.from_pretrained(
-        cfg.model_name,
-        num_labels=2,
+        cfg.model_name, num_labels=2,
     ).to(device)
 
     train_labels = train_df["fraudulent"].astype(int).values
     val_labels = val_df["fraudulent"].astype(int).values
     test_labels = test_df["fraudulent"].astype(int).values
 
-    # ---- TOKENIZE ONCE (FAST) ----
+    # tokenize all splits once upfront
     train_enc = tokenize_texts(tokenizer, train_df["text"].tolist(), cfg.max_len)
     val_enc   = tokenize_texts(tokenizer, val_df["text"].tolist(), cfg.max_len)
     test_enc  = tokenize_texts(tokenizer, test_df["text"].tolist(), cfg.max_len)
@@ -124,28 +112,20 @@ def main():
     test_ds  = TokenizedDataset(test_enc, test_labels)
     ob_ds    = TokenizedDataset(ob_enc, labels=None)
 
-    # Dynamic padding per batch (MUCH faster than padding every sample to max_len)
+    # pad each batch to its longest sequence (faster than padding all to max_len)
     collator = DataCollatorWithPadding(tokenizer=tokenizer, pad_to_multiple_of=8)
 
-    # macOS: keep num_workers=0 to avoid multiprocessing headaches/hangs
-    train_loader = DataLoader(
-        train_ds, batch_size=cfg.batch_size, shuffle=True,
-        num_workers=0, collate_fn=collator
-    )
-    val_loader = DataLoader(
-        val_ds, batch_size=cfg.batch_size, shuffle=False,
-        num_workers=0, collate_fn=collator
-    )
-    test_loader = DataLoader(
-        test_ds, batch_size=cfg.batch_size, shuffle=False,
-        num_workers=0, collate_fn=collator
-    )
-    ob_loader = DataLoader(
-        ob_ds, batch_size=cfg.batch_size, shuffle=False,
-        num_workers=0, collate_fn=collator
-    )
+    # num_workers=0 avoids multiprocessing hangs on macOS
+    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True,
+                              num_workers=0, collate_fn=collator)
+    val_loader   = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False,
+                              num_workers=0, collate_fn=collator)
+    test_loader  = DataLoader(test_ds, batch_size=cfg.batch_size, shuffle=False,
+                              num_workers=0, collate_fn=collator)
+    ob_loader    = DataLoader(ob_ds, batch_size=cfg.batch_size, shuffle=False,
+                              num_workers=0, collate_fn=collator)
 
-    # Class weights (same as your code)
+    # class weights to handle fake/real imbalance
     pos = float((train_labels == 1).sum())
     neg = float((train_labels == 0).sum())
     class_weights = torch.tensor([1.0, neg / max(pos, 1.0)], device=device)
@@ -153,9 +133,7 @@ def main():
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr)
     criterion = nn.CrossEntropyLoss(weight=class_weights)
 
-    # Mixed precision for MPS/CUDA (can be a big speedup)
     use_amp = cfg.use_amp and device.type in {"cuda", "mps"}
-    autocast_dtype = torch.float16  # safest common choice
 
     best_state = None
     best_val_f1 = -1.0
@@ -165,14 +143,14 @@ def main():
         model.train()
         total_loss = 0.0
 
-        for step, batch in enumerate(train_loader):
+        for batch in train_loader:
             labels = batch.pop("labels").to(device)
             inputs = {k: v.to(device) for k, v in batch.items()}
 
             optimizer.zero_grad(set_to_none=True)
 
             if use_amp:
-                with torch.autocast(device_type=device.type, dtype=autocast_dtype):
+                with torch.autocast(device_type=device.type, dtype=torch.float16):
                     logits = model(**inputs).logits
                     loss = criterion(logits, labels)
             else:
@@ -182,10 +160,6 @@ def main():
             loss.backward()
             optimizer.step()
             total_loss += float(loss.item())
-
-            # lightweight heartbeat so it never looks "stuck"
-            if step == 0:
-                print(f"Epoch {epoch:02d} first batch ok. loss={loss.item():.4f}")
 
         val_probs = predict_probs(model, val_loader, device)
         val_f1, val_p, val_r = eval_at_threshold(val_labels, val_probs, 0.5)
@@ -235,8 +209,7 @@ def main():
     tokenizer.save_pretrained(model_dir)
     torch.save({"state_dict": model.state_dict(), "config": cfg.__dict__}, model_dir / "distilbert.pt")
     pd.DataFrame([metrics]).to_csv(PATHS.reports / "metrics_distilbert.csv", index=False)
-
-    print(f"✅ Saved DistilBERT model to {model_dir}")
+    print(f"Saved to {model_dir}")
 
 
 if __name__ == "__main__":
