@@ -1,3 +1,13 @@
+# ── JobScan — Explainability Page ──────────────────────────────────────────────
+# Full explanation report for the last prediction stored in st.session_state.
+# Reads last_prediction / last_explanation written by app.py (detector page).
+#
+# Tabs:
+#   💡 Plain English  – categorised fraud patterns + structural checklist
+#   📊 Model Signals  – SHAP bar charts + occlusion audit
+#   🔍 Highlighted Text – colour-coded posting text
+#   🔬 Methodology    – architecture, metrics, dataset info
+#   💬 Feedback       – user feedback saved to feedback_log.csv
 from __future__ import annotations
 
 import csv
@@ -22,9 +32,12 @@ if str(APP_DIR) not in sys.path:
 from explain_ui import (
     build_highlight_spans,
     bucket_magnitude,
+    build_plain_english_summary,
+    categorise_signals,
     redact_emails,
     redact_phones,
     render_highlighted_html,
+    structural_checklist,
 )
 from model_runtime import load_model
 
@@ -35,51 +48,36 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ── Theme ──────────────────────────────────────────────────────────────────────
-dark_mode = st.session_state.get("dark_mode", True)
-D = dark_mode
-
-_bg = (
-    "radial-gradient(ellipse 80% 65% at 0% 0%,rgba(139,92,246,0.30) 0%,transparent 52%),"
-    "radial-gradient(ellipse 65% 65% at 100% 100%,rgba(6,182,212,0.22) 0%,transparent 52%),"
-    "linear-gradient(160deg,#07070F 0%,#0A0A16 50%,#060B14 100%)"
-    if D else
-    "radial-gradient(ellipse 80% 65% at 0% 0%,rgba(139,92,246,0.12) 0%,transparent 52%),"
-    "radial-gradient(ellipse 65% 65% at 100% 100%,rgba(6,182,212,0.10) 0%,transparent 52%),"
-    "linear-gradient(160deg,#EEF2FF 0%,#F8FAFC 50%,#F0FDF4 100%)"
-)
-_card_pb    = "rgba(10,10,22,0.38)"    if D else "rgba(255,255,255,0.55)"
-_card_shd   = "0.35"                   if D else "0.12"
-_card_shd_h = "0.42"                   if D else "0.15"
-_text_col   = "#F1F5F9"                if D else "#0F172A"
-_inp_bg     = "rgba(255,255,255,0.05)" if D else "rgba(255,255,255,0.85)"
-_inp_bdr    = "rgba(255,255,255,0.1)"  if D else "rgba(139,92,246,0.2)"
-_tab_col    = "rgba(148,163,184,0.8)"  if D else "#64748B"
-_lbl_col    = "#94A3B8"                if D else "#374151"
-_tab_bg     = "rgba(255,255,255,0.05)" if D else "rgba(255,255,255,0.6)"
-_tab_bdr    = "rgba(255,255,255,0.08)" if D else "rgba(139,92,246,0.15)"
-_sbtn_bg    = "rgba(255,255,255,0.06)" if D else "rgba(139,92,246,0.08)"
-_sbtn_col   = "#A78BFA"                if D else "#5B21B6"
-_sbtn_bdr   = "rgba(167,139,250,0.28)" if D else "rgba(139,92,246,0.3)"
-_sbtn_hbg   = "rgba(139,92,246,0.15)" if D else "rgba(139,92,246,0.14)"
-_sbtn_hcol  = "#C4B5FD"                if D else "#4C1D95"
-_sbtn_hbdr  = "rgba(139,92,246,0.6)"  if D else "rgba(139,92,246,0.55)"
-_plink_bg   = "rgba(255,255,255,0.06)" if D else "rgba(255,255,255,0.85)"
-_plink_col  = "#A78BFA"                if D else "#5B21B6"
-_plink_bdr  = "rgba(167,139,250,0.3)" if D else "rgba(139,92,246,0.3)"
-_H          = "#E2E8F0"                if D else "#0F172A"
-_S          = "#64748B"
-_note_col   = "#94A3B8"                if D else "#374151"
-_mini_bg    = "rgba(255,255,255,0.05)" if D else "rgba(255,255,255,0.7)"
-_mini_bdr   = "rgba(255,255,255,0.09)" if D else "rgba(139,92,246,0.15)"
-_mini_col   = "#E2E8F0"                if D else "#0F172A"
-_tab_sel_col = "#DDD6FE"               if D else "#5B21B6"
-_tab_hov_col = "#C4B5FD"               if D else "#7C3AED"
-_df_bdr      = "rgba(255,255,255,0.09)" if D else "rgba(139,92,246,0.18)"
-# Highlighted-text panel (always light background so highlight colours are readable)
-_hl_bg  = "rgba(15,20,40,0.90)"        if D else "rgba(255,255,255,0.92)"
-_hl_col = "#E2E8F0"                    if D else "#1E293B"
-_hl_bdr = "rgba(255,255,255,0.09)"     if D else "rgba(226,232,240,0.8)"
+# ── Theme (iOS light) ──────────────────────────────────────────────────────────
+_bg       = "#f2f2f7"
+_text_col = "#1c1c1e"
+_inp_bg   = "#ffffff"
+_inp_bdr  = "rgba(60,60,67,0.18)"
+_tab_col  = "#3c3c43"
+_lbl_col  = "#1c1c1e"
+_tab_bg   = "rgba(118,118,128,0.12)"
+_tab_bdr  = "transparent"
+_sbtn_bg  = "#ffffff"
+_sbtn_col = "#007aff"
+_sbtn_bdr = "rgba(0,122,255,0.3)"
+_sbtn_hbg = "rgba(0,122,255,0.08)"
+_sbtn_hcol = "#0056b3"
+_sbtn_hbdr = "rgba(0,122,255,0.5)"
+_plink_bg  = "#007aff"
+_plink_col = "#ffffff"
+_plink_bdr = "#007aff"
+_H         = "#1c1c1e"
+_S         = "#8e8e93"
+_note_col  = "#3c3c43"
+_mini_bg   = "#f2f2f7"
+_mini_bdr  = "rgba(60,60,67,0.18)"
+_mini_col  = "#1c1c1e"
+_tab_sel_col = "#000000"
+_tab_hov_col = "#007aff"
+_df_bdr    = "rgba(60,60,67,0.18)"
+_hl_bg     = "#ffffff"
+_hl_col    = "#1c1c1e"
+_hl_bdr    = "rgba(60,60,67,0.18)"
 
 # ── Theme-dependent CSS ────────────────────────────────────────────────────────
 st.markdown(f"""<style>
@@ -87,27 +85,25 @@ html, body, .stApp {{
     background:{_bg} !important;
     background-attachment:fixed !important;
     color:{_text_col} !important;
+    font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important;
 }}
-/* Broad text override — p/li/span only; divs keep their inline styles */
+/* Text colour — p/li only; excludes span to avoid overriding badge/pill inline colours */
 .stApp [data-testid="stMarkdownContainer"] p,
 .stApp [data-testid="stMarkdownContainer"] li,
-.stApp [data-testid="stMarkdownContainer"] span,
 .stApp [data-testid="stExpanderDetails"] p,
 .stApp [data-testid="stExpanderDetails"] li,
-.stApp [data-testid="stExpanderDetails"] span,
 .stApp [data-testid="stCaptionContainer"] p,
-.stApp .stMarkdown p, .stApp .stMarkdown li,
-.stApp .stMarkdown span {{
+.stApp .stMarkdown p, .stApp .stMarkdown li {{
     color:{_text_col} !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"] {{
-    background:
-        linear-gradient({_card_pb},{_card_pb}) padding-box,
-        linear-gradient(135deg,rgba(139,92,246,0.65),rgba(6,182,212,0.55),rgba(236,72,153,0.45),rgba(16,185,129,0.45),rgba(139,92,246,0.65)) border-box !important;
-    box-shadow:0 8px 40px rgba(0,0,0,{_card_shd}),inset 0 1px 0 rgba(255,255,255,0.22),inset 0 -1px 0 rgba(0,0,0,0.06) !important;
+    background:#ffffff !important;
+    border-radius:16px !important;
+    border:none !important;
+    box-shadow:0 1px 3px rgba(0,0,0,0.08),0 4px 16px rgba(0,0,0,0.06) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:hover {{
-    box-shadow:0 12px 50px rgba(0,0,0,{_card_shd_h}),0 0 28px rgba(139,92,246,0.12),inset 0 1px 0 rgba(255,255,255,0.28),inset 0 -1px 0 rgba(0,0,0,0.06) !important;
+    box-shadow:0 2px 6px rgba(0,0,0,0.10),0 8px 28px rgba(0,0,0,0.09) !important;
 }}
 .stTextInput > div > div > input,
 .stTextArea > div > div > textarea {{
@@ -123,7 +119,9 @@ html, body, .stApp {{
 .stApp .stTabs [data-baseweb="tab"]:hover {{ color:{_tab_hov_col} !important; }}
 .stApp .stTabs [aria-selected="true"] {{ color:{_tab_sel_col} !important; }}
 .stApp .stTextInput label,.stApp .stTextArea label {{ color:{_lbl_col} !important; }}
-.stApp .stRadio label,.stApp .stCheckbox label,.stApp .stToggle label {{ color:{_lbl_col} !important; }}
+.stApp .stRadio label,.stApp .stCheckbox label,.stApp .stToggle label {{ color:{_text_col} !important; font-weight:500 !important; }}
+.stApp [data-testid="stToggle"] p {{ color:{_text_col} !important; }}
+.stApp [data-testid="stToggle"] span {{ color:{_text_col} !important; }}
 .stButton > button[kind="secondary"] {{
     background:{_sbtn_bg} !important;
     color:{_sbtn_col} !important;
@@ -142,13 +140,12 @@ html, body, .stApp {{
 }}
 .stApp [data-testid="stDataFrameContainer"] {{
     border:1px solid {_df_bdr} !important;
+    border-radius:12px !important;
 }}
 </style>""", unsafe_allow_html=True)
 
 # ── Static CSS ─────────────────────────────────────────────────────────────────
 st.markdown("""<style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
-
 [data-testid="stHeader"],[data-testid="stToolbar"],[data-testid="stDecoration"],
 [data-testid="stStatusWidget"],.stAppToolbar,#stDecoration,
 header[data-testid="stHeader"] {
@@ -172,8 +169,11 @@ header[data-testid="stHeader"] {
   to   { opacity:1; transform:translateY(0) scale(1); }
 }
 
-html, body, .stApp { font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif !important; }
-h1,h2,h3 { font-family:'Space Grotesk',sans-serif !important; letter-spacing:-0.02em !important; }
+html, body, .stApp { font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important; }
+h1,h2,h3,h4 { font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important; letter-spacing:-0.02em !important; font-weight:700 !important; }
+h1 { font-size:2.4rem !important; }
+h2 { font-size:1.85rem !important; }
+h3 { font-size:1.4rem !important; }
 
 .block-container {
     padding-top:0 !important;
@@ -184,97 +184,95 @@ h1,h2,h3 { font-family:'Space Grotesk',sans-serif !important; letter-spacing:-0.
 section.main > div { overflow:visible !important; }
 
 .stButton > button[kind="primary"] {
-    background:linear-gradient(135deg,#7C3AED,#4F46E5) !important;
-    color:#FFFFFF !important; border:none !important; border-radius:10px !important;
-    font-family:'Space Grotesk',sans-serif !important; font-weight:600 !important;
+    background:#007aff !important;
+    color:#FFFFFF !important; border:none !important; border-radius:14px !important;
+    font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important; font-weight:600 !important;
     font-size:15px !important; padding:0.65rem 1.6rem !important;
-    box-shadow:0 0 14px rgba(124,58,237,0.45),0 2px 8px rgba(79,70,229,0.25) !important;
+    box-shadow:0 2px 8px rgba(0,122,255,0.25) !important;
     transition:all 0.22s cubic-bezier(0.16,1,0.3,1) !important;
 }
 .stButton > button[kind="primary"]:hover {
-    background:linear-gradient(135deg,#8B5CF6,#6D28D9) !important;
-    box-shadow:0 0 22px rgba(139,92,246,0.52),0 4px 14px rgba(79,70,229,0.3) !important;
-    transform:translateY(-2px) scale(1.01) !important;
+    background:#0056b3 !important;
+    box-shadow:0 4px 14px rgba(0,122,255,0.35) !important;
+    transform:translateY(-1px) !important;
 }
 .stButton > button[kind="secondary"] {
-    border-radius:10px !important; font-family:'Inter',sans-serif !important;
+    border-radius:14px !important;
+    font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important;
     font-weight:500 !important; font-size:14px !important;
     transition:all 0.2s cubic-bezier(0.16,1,0.3,1) !important;
 }
 .stButton > button[kind="secondary"]:hover {
-    box-shadow:0 0 18px rgba(139,92,246,0.28) !important;
     transform:translateY(-1px) !important;
 }
 [data-testid="stPageLink"] a {
     display:inline-flex !important; align-items:center !important; gap:6px !important;
-    padding:9px 18px !important; border-radius:10px !important;
-    font-family:'Inter',sans-serif !important; font-weight:600 !important;
+    padding:9px 18px !important; border-radius:14px !important;
+    font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important; font-weight:600 !important;
     font-size:13px !important; text-decoration:none !important;
-    box-shadow:0 0 12px rgba(139,92,246,0.15) !important;
+    box-shadow:0 2px 8px rgba(0,122,255,0.2) !important;
     transition:all 0.2s cubic-bezier(0.16,1,0.3,1) !important;
 }
 [data-testid="stPageLink"] a:hover {
-    background:rgba(139,92,246,0.15) !important;
-    border-color:rgba(139,92,246,0.6) !important;
-    color:#C4B5FD !important;
-    box-shadow:0 0 24px rgba(139,92,246,0.35) !important;
+    background:#0056b3 !important;
+    box-shadow:0 4px 14px rgba(0,122,255,0.3) !important;
     transform:translateY(-1px) !important;
 }
 .stTextInput > div > div > input, .stTextArea > div > div > textarea {
-    border-radius:10px !important; font-family:'Inter',sans-serif !important;
+    border-radius:10px !important;
+    font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important;
     font-size:14px !important; transition:border-color 0.2s ease,box-shadow 0.2s ease !important;
     line-height:1.75 !important;
 }
 .stTextInput > div > div > input:focus,
 .stTextArea > div > div > textarea:focus {
-    border-color:rgba(139,92,246,0.7) !important;
-    box-shadow:0 0 0 3px rgba(139,92,246,0.2) !important;
+    border-color:#007aff !important;
+    box-shadow:0 0 0 3px rgba(0,122,255,0.15) !important;
     outline:none !important;
 }
 .stTextInput > div > div > input::placeholder,
-.stTextArea > div > div > textarea::placeholder { color:rgba(148,163,184,0.5) !important; }
+.stTextArea > div > div > textarea::placeholder { color:rgba(60,60,67,0.35) !important; }
 .stTextInput label,.stTextArea label {
-    font-family:'Space Grotesk',sans-serif !important;
+    font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important;
     font-weight:600 !important; font-size:14px !important;
 }
 [data-testid="stVerticalBlockBorderWrapper"] {
-    border-radius:20px !important; border:1px solid transparent !important;
-    backdrop-filter:blur(28px) saturate(180%) !important;
-    -webkit-backdrop-filter:blur(28px) saturate(180%) !important;
+    border-radius:16px !important; border:none !important;
     animation:cardIn 0.45s cubic-bezier(0.16,1,0.3,1) both !important;
     transition:box-shadow 0.3s ease !important;
 }
 .stTabs [data-baseweb="tab-list"] {
     border-radius:12px !important; padding:4px !important;
-    gap:2px !important; backdrop-filter:blur(12px) !important;
+    gap:2px !important;
 }
 .stTabs [data-baseweb="tab"] {
-    border-radius:9px !important; font-family:'Space Grotesk',sans-serif !important;
+    border-radius:9px !important;
+    font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important;
     font-weight:500 !important; font-size:14px !important; padding:7px 20px !important;
     border:none !important; transition:all 0.2s cubic-bezier(0.16,1,0.3,1) !important;
 }
-.stTabs [data-baseweb="tab"]:hover { background:rgba(139,92,246,0.12) !important; }
+.stTabs [data-baseweb="tab"]:hover { background:rgba(0,122,255,0.08) !important; }
 .stTabs [aria-selected="true"] {
-    background:rgba(139,92,246,0.2) !important;
-    box-shadow:0 0 14px rgba(139,92,246,0.25) !important;
+    background:#ffffff !important;
+    box-shadow:0 1px 3px rgba(0,0,0,0.12),0 1px 2px rgba(0,0,0,0.08) !important;
     font-weight:600 !important;
 }
 .stTabs [data-baseweb="tab-highlight"],
 .stTabs [data-baseweb="tab-border"] { display:none !important; }
 .stRadio > div { gap:8px !important; }
 .stRadio label,.stCheckbox label,.stToggle label {
-    font-family:'Inter',sans-serif !important; font-size:14px !important;
+    font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important; font-size:14px !important;
 }
 [data-testid="stDataFrameContainer"] {
     border-radius:12px !important; overflow:hidden !important;
-    box-shadow:0 2px 16px rgba(0,0,0,0.2) !important;
+    box-shadow:0 1px 4px rgba(0,0,0,0.06) !important;
 }
-[data-testid="stSpinner"] > div { color:#A78BFA !important; }
+[data-testid="stSpinner"] > div { color:#007aff !important; }
 .stAlert { border-radius:10px !important; font-size:14px !important; }
 ::-webkit-scrollbar { width:6px; height:6px; }
-::-webkit-scrollbar-track { background:rgba(255,255,255,0.03); border-radius:3px; }
-::-webkit-scrollbar-thumb { background:rgba(139,92,246,0.4); border-radius:3px; }
-::-webkit-scrollbar-thumb:hover { background:rgba(139,92,246,0.65); }
+::-webkit-scrollbar-track { background:rgba(0,0,0,0.04); border-radius:3px; }
+::-webkit-scrollbar-thumb { background:rgba(0,0,0,0.2); border-radius:3px; }
+::-webkit-scrollbar-thumb:hover { background:rgba(0,0,0,0.35); }
 </style>""", unsafe_allow_html=True)
 
 
@@ -292,7 +290,7 @@ def gauge_html(prob: float) -> str:
     return f"""
     <div style="margin:10px 0 6px;">
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px;">
-        <span style="font-size:11px;font-weight:600;color:#64748B;text-transform:uppercase;letter-spacing:0.07em;">Fraud Probability</span>
+        <span style="font-size:11px;font-weight:600;color:#8e8e93;text-transform:uppercase;letter-spacing:0.07em;">Fraud Probability</span>
         <span style="font-size:32px;font-weight:800;color:{color};letter-spacing:-0.03em;line-height:1;
                      text-shadow:0 0 16px {color}55;">{pct}%</span>
       </div>
@@ -304,9 +302,9 @@ def gauge_html(prob: float) -> str:
                     box-shadow:0 0 10px {color}88,0 2px 6px rgba(0,0,0,0.2);"></div>
       </div>
       <div style="display:flex;justify-content:space-between;margin-top:6px;">
-        <span style="font-size:11px;color:#64748B;font-weight:500;">Low</span>
-        <span style="font-size:11px;color:#64748B;font-weight:500;">Uncertain</span>
-        <span style="font-size:11px;color:#64748B;font-weight:500;">High</span>
+        <span style="font-size:11px;color:#8e8e93;font-weight:500;">Low</span>
+        <span style="font-size:11px;color:#8e8e93;font-weight:500;">Uncertain</span>
+        <span style="font-size:11px;color:#8e8e93;font-weight:500;">High</span>
       </div>
     </div>"""
 
@@ -322,7 +320,7 @@ def _plotly_bar(df: pd.DataFrame, x_col: str, y_col: str,
         y=sdf[y_col].tolist(),
         orientation="h",
         marker=dict(color=colors, opacity=0.88,
-                    line=dict(color="rgba(255,255,255,0.1)", width=0.5)),
+                    line=dict(color="rgba(60,60,67,0.15)", width=0.5)),
         hovertemplate="<b>%{y}</b><br>%{x:.4f}<extra></extra>",
     ))
     fig.update_layout(
@@ -330,7 +328,7 @@ def _plotly_bar(df: pd.DataFrame, x_col: str, y_col: str,
         margin=dict(l=8, r=28, t=12, b=44),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Inter", size=12, color=_H),
+        font=dict(family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif", size=12, color=_H),
         xaxis=dict(
             title=dict(text=x_title, font=dict(size=11, color=_S)),
             showgrid=True, gridcolor="rgba(148,163,184,0.12)",
@@ -367,12 +365,9 @@ last_prediction  = st.session_state.get("last_prediction")
 last_explanation = st.session_state.get("last_explanation")
 
 # ── Header ─────────────────────────────────────────────────────────────────────
-_hdr_bg  = "rgba(7,7,15,0.84)"       if D else "rgba(255,255,255,0.82)"
-_hdr_bdr = "rgba(255,255,255,0.07)"  if D else "rgba(139,92,246,0.15)"
-_hdr_shd = ("0 1px 0 rgba(255,255,255,0.05),0 4px 32px rgba(0,0,0,0.5)"
-             if D else "0 1px 0 rgba(139,92,246,0.1),0 4px 24px rgba(0,0,0,0.06)")
-_name_col = "#F1F5F9" if D else "#0F172A"
-_name_shd = "0 0 20px rgba(139,92,246,0.4)" if D else "none"
+_hdr_bg  = "rgba(242,242,247,0.95)"
+_hdr_bdr = "rgba(60,60,67,0.18)"
+_hdr_shd = "0 1px 0 rgba(60,60,67,0.12),0 4px 16px rgba(0,0,0,0.05)"
 
 st.markdown(f"""
 <div style="background:{_hdr_bg};backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
@@ -381,14 +376,13 @@ st.markdown(f"""
   <div style="display:flex;align-items:center;gap:14px;max-width:1160px;margin:0 auto;">
     <div style="width:38px;height:38px;background:linear-gradient(135deg,#7C3AED,#4F46E5);
                 border-radius:11px;display:flex;align-items:center;justify-content:center;
-                box-shadow:0 0 20px rgba(124,58,237,0.6),0 4px 12px rgba(79,70,229,0.4);">
+                box-shadow:0 0 20px rgba(124,58,237,0.5),0 4px 12px rgba(79,70,229,0.35);">
       <div style="width:16px;height:16px;background:#FFFFFF;border-radius:3px;opacity:0.92;"></div>
     </div>
     <div>
-      <div style="font-size:20px;font-weight:700;color:{_name_col};
-                  font-family:'Space Grotesk',sans-serif;letter-spacing:-0.02em;line-height:1.2;
-                  text-shadow:{_name_shd};">JobScan</div>
-      <div style="font-size:11px;color:#64748B;font-weight:400;letter-spacing:0.02em;">
+      <div style="font-size:22px;font-weight:800;color:#1c1c1e;
+                  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif;letter-spacing:-0.02em;line-height:1.2;">JobScan</div>
+      <div style="font-size:11px;color:#8e8e93;font-weight:400;letter-spacing:0.02em;">
         Full Explanation Report
       </div>
     </div>
@@ -406,8 +400,8 @@ st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 if not last_prediction or not last_explanation:
     st.markdown(f"""
     <div style="text-align:center;padding:5rem 2rem;animation:fadeSlideUp 0.5s ease both;">
-      <div style="font-size:17px;font-weight:700;color:#94A3B8;margin-bottom:8px;">No analysis to explain</div>
-      <div style="font-size:13px;color:#CBD5E1;">Run an analysis on the Detector page first.</div>
+      <div style="font-size:17px;font-weight:700;color:#8e8e93;margin-bottom:8px;">No analysis to explain</div>
+      <div style="font-size:13px;color:#3c3c43;">Run an analysis on the Detector page first.</div>
     </div>
     """, unsafe_allow_html=True)
     st.stop()
@@ -421,6 +415,18 @@ neg_df       = pd.DataFrame(neg_signals)
 all_signals  = pos_signals + neg_signals
 audit_rows   = (last_explanation.get("audit_top_increase_fake", []) +
                 last_explanation.get("audit_top_decrease_fake", []))
+
+# Plain-English data — computed once, used in the new tab
+_title_val       = last_prediction.get("title", "")
+_description_val = last_prediction.get("description", "")
+_checklist       = structural_checklist(_title_val, _description_val)
+_categorised     = categorise_signals(pos_signals, neg_signals)
+_plain_summary   = build_plain_english_summary(
+    _categorised,
+    last_prediction.get("fake_probability", 0.5),
+    last_prediction.get("label", "real"),
+    _checklist,
+)
 
 # Highlight spans for text tab
 spans    = build_highlight_spans(text, [
@@ -454,7 +460,7 @@ b_styles = {
     "Medium": ("rgba(251,191,36,0.10)", "rgba(251,191,36,0.3)", "#FCD34D"),
     "Low":    ("rgba(239,68,68,0.10)",  "rgba(239,68,68,0.3)",  "#F87171"),
 }
-b_bg, b_border, b_fg = b_styles.get(bucket, ("rgba(255,255,255,0.05)", "rgba(255,255,255,0.09)", "#94A3B8"))
+b_bg, b_border, b_fg = b_styles.get(bucket, ("#f2f2f7", "rgba(60,60,67,0.12)", "#8e8e93"))
 
 with st.container(border=True):
     st.markdown("<div style='padding:4px 4px 0;'>", unsafe_allow_html=True)
@@ -471,24 +477,20 @@ with st.container(border=True):
             <span style="font-size:16px;font-weight:700;color:{v_accent};letter-spacing:-0.01em;
                          text-shadow:0 0 12px {v_accent}66;">{verdict_text}</span>
           </div>
-          <div style="font-size:12px;color:#64748B;margin-bottom:12px;padding-left:18px;">
+          <div style="font-size:12px;color:#8e8e93;margin-bottom:12px;padding-left:18px;">
             Threshold: {p.get('threshold', 0.5):.2f}
           </div>
-          <div style="font-size:11px;color:#475569;padding-left:18px;">
+          <div style="font-size:11px;color:#3c3c43;padding-left:18px;">
             {p.get('timestamp','')[:19].replace('T', ' ')} UTC
           </div>
         </div>
         """, unsafe_allow_html=True)
 
     with g_col:
-        st.markdown(f"""
-        <div style="background:{_mini_bg};border:1px solid {_mini_bdr};
-                    border-radius:14px;padding:16px 20px;box-shadow:0 2px 16px rgba(0,0,0,0.15);">
-        """, unsafe_allow_html=True)
-        st.markdown(gauge_html(p["fake_probability"]), unsafe_allow_html=True)
         ci_lo = p.get("ci_low",  p["fake_probability"])
         ci_hi = p.get("ci_high", p["fake_probability"])
-        st.markdown(f"""
+        st.markdown(
+            gauge_html(p["fake_probability"]) + f"""
           <div style="display:flex;gap:10px;margin-top:12px;">
             <div style="flex:1;background:{_mini_bg};border:1px solid {_mini_bdr};
                         border-radius:10px;padding:10px 14px;">
@@ -499,15 +501,12 @@ with st.container(border=True):
               </div>
             </div>
             <div style="flex:1;background:{b_bg};border:1px solid {b_border};
-                        border-radius:10px;padding:10px 14px;
-                        box-shadow:0 2px 12px rgba(0,0,0,0.3),0 0 10px {b_fg}22;">
-              <div style="font-size:10px;font-weight:600;color:#64748B;text-transform:uppercase;
+                        border-radius:10px;padding:10px 14px;">
+              <div style="font-size:10px;font-weight:600;color:{_S};text-transform:uppercase;
                           letter-spacing:0.06em;margin-bottom:4px;">Reliability</div>
-              <div style="font-size:15px;font-weight:700;color:{b_fg};
-                          text-shadow:0 0 10px {b_fg}66;">{bucket}</div>
+              <div style="font-size:15px;font-weight:700;color:{b_fg};">{bucket}</div>
             </div>
           </div>
-        </div>
         """, unsafe_allow_html=True)
 
     if p.get("missing_fields"):
@@ -538,12 +537,148 @@ st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 # ═══════════════════════════════════════════════════════════════════════════════
 # Tabs
 # ═══════════════════════════════════════════════════════════════════════════════
-tab_signals, tab_text, tab_method, tab_feedback = st.tabs([
+tab_plain, tab_signals, tab_text, tab_method, tab_feedback = st.tabs([
+    "💡  Plain English",
     "📊  Model Signals",
     "🔍  Highlighted Text",
     "🔬  Methodology",
     "💬  Feedback",
 ])
+
+# ── Tab 0: Plain English ───────────────────────────────────────────────────────
+with tab_plain:
+    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+    # ── Summary paragraph ──────────────────────────────────────────────────────
+    _pe_is_fake = last_prediction.get("label") == "fake"
+    _pe_accent  = "#F87171" if _pe_is_fake else "#34D399"
+    _pe_bg      = "rgba(239,68,68,0.07)"  if _pe_is_fake else "rgba(52,211,153,0.07)"
+    _pe_border  = "rgba(239,68,68,0.3)"   if _pe_is_fake else "rgba(52,211,153,0.3)"
+
+    st.markdown(f"""
+    <div style="background:{_pe_bg};border:1px solid {_pe_border};border-left:4px solid {_pe_accent};
+                border-radius:14px;padding:18px 22px;margin-bottom:24px;
+                animation:fadeSlideUp 0.35s ease both;">
+      <div style="font-size:13px;font-weight:600;color:{_pe_accent};
+                  text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px;">
+        What does this result mean?
+      </div>
+      <div style="font-size:14px;color:{_text_col};line-height:1.75;">
+        {_plain_summary}
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Fraud pattern cards ────────────────────────────────────────────────────
+    if _categorised:
+        st.markdown(f"""
+        <div style="font-size:15px;font-weight:700;color:{_H};
+                    font-family:'Plus Jakarta Sans',sans-serif;margin-bottom:14px;">
+          Detected Fraud Patterns
+        </div>
+        <div style="font-size:12px;color:{_S};margin-bottom:16px;line-height:1.6;">
+          The model's signals have been grouped into recognisable fraud patterns from
+          the academic literature on fake job detection (Amaar et al., 2022;
+          Banerjee et al., 2020).
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Show cards in rows of 2
+        for i in range(0, len(_categorised), 2):
+            row_cats = _categorised[i:i + 2]
+            cols = st.columns(len(row_cats))
+            for col, cat in zip(cols, row_cats):
+                _c_is_fraud = cat["direction"] == "fraud"
+                _c_accent   = "#F87171" if _c_is_fraud else "#34D399"
+                _c_bg       = "rgba(239,68,68,0.08)"  if _c_is_fraud else "rgba(52,211,153,0.08)"
+                _c_border   = "rgba(239,68,68,0.28)"  if _c_is_fraud else "rgba(52,211,153,0.28)"
+                _c_badge_bg = "rgba(239,68,68,0.15)"  if _c_is_fraud else "rgba(52,211,153,0.12)"
+                _c_dir_label = "Fraud signal" if _c_is_fraud else "Legitimacy signal"
+                _token_pills = "".join(
+                    f'<span style="display:inline-block;background:{_c_badge_bg};'
+                    f'border:1px solid {_c_border};border-radius:99px;'
+                    f'padding:2px 10px;font-size:11px;font-weight:600;color:{_c_accent};'
+                    f'margin:2px 3px 2px 0;">{t}</span>'
+                    for t in cat["matched_tokens"]
+                )
+                with col:
+                    st.markdown(f"""
+                    <div style="background:{_c_bg};border:1px solid {_c_border};
+                                border-radius:14px;padding:16px 18px;height:100%;
+                                animation:cardIn 0.4s ease both;">
+                      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                        <span style="font-size:22px;">{cat['icon']}</span>
+                        <div>
+                          <div style="font-size:13px;font-weight:700;color:{_H};
+                                      font-family:'Plus Jakarta Sans',sans-serif;">
+                            {cat['name']}
+                          </div>
+                          <div style="font-size:10px;font-weight:600;color:{_c_accent};
+                                      text-transform:uppercase;letter-spacing:0.05em;">
+                            {_c_dir_label}
+                          </div>
+                        </div>
+                      </div>
+                      <div style="font-size:12px;color:{_note_col};line-height:1.65;margin-bottom:10px;">
+                        {cat['explanation']}
+                      </div>
+                      <div style="font-size:11px;font-weight:600;color:{_S};
+                                  margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">
+                        Triggered by:
+                      </div>
+                      <div>{_token_pills}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    else:
+        st.markdown(f"""
+        <div style="padding:20px;text-align:center;color:{_S};font-size:13px;
+                    background:{_mini_bg};border-radius:12px;border:1px solid {_mini_bdr};
+                    margin-bottom:24px;">
+          No recognisable fraud-pattern categories matched the top signals for this posting.
+          See the <strong>Model Signals</strong> tab for the raw token-level breakdown.
+        </div>""", unsafe_allow_html=True)
+
+    # ── Structural checklist ───────────────────────────────────────────────────
+    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+    st.markdown(f"""
+    <div style="font-size:15px;font-weight:700;color:{_H};
+                font-family:'Plus Jakarta Sans',sans-serif;margin-bottom:6px;">
+      Structural Red-Flag Checklist
+    </div>
+    <div style="font-size:12px;color:{_S};margin-bottom:16px;line-height:1.6;">
+      These checks examine the <em>structure</em> of the posting independently of the
+      model — missing fields are among the most reliable indicators of fraud
+      (Vidros et al., 2017).
+    </div>
+    """, unsafe_allow_html=True)
+
+    for check in _checklist:
+        _ck_pass   = check["pass"]
+        _ck_icon   = "✅" if _ck_pass else "❌"
+        _ck_bg     = "rgba(52,211,153,0.07)" if _ck_pass else "rgba(239,68,68,0.07)"
+        _ck_border = "rgba(52,211,153,0.25)" if _ck_pass else "rgba(239,68,68,0.25)"
+        st.markdown(f"""
+        <div style="background:{_ck_bg};border:1px solid {_ck_border};
+                    border-radius:10px;padding:12px 16px;margin-bottom:8px;
+                    display:flex;align-items:flex-start;gap:12px;">
+          <span style="font-size:16px;flex-shrink:0;margin-top:1px;">{_ck_icon}</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:{_H};margin-bottom:3px;">
+              {check['label']}
+            </div>
+            <div style="font-size:12px;color:{_S};line-height:1.55;">{check['why']}</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+    st.caption(
+        "Note: these checks are heuristic rules applied to the raw text. "
+        "They supplement the ML model verdict but do not replace it."
+    )
 
 # ── Tab 1: Model Signals ───────────────────────────────────────────────────────
 with tab_signals:
@@ -568,7 +703,7 @@ with tab_signals:
     # SHAP section
     st.markdown(f"""
     <div style="margin-bottom:8px;">
-      <div style="font-size:16px;font-weight:700;color:{_H};font-family:'Space Grotesk',sans-serif;
+      <div style="font-size:20px;font-weight:700;color:{_H};font-family:'Plus Jakarta Sans',sans-serif;
                   letter-spacing:-0.01em;margin-bottom:4px;">SHAP Token Attribution</div>
       <div style="font-size:13px;color:{_S};line-height:1.65;">
         Shapley values assign each token a marginal credit score for the fraud-probability output
@@ -597,7 +732,14 @@ with tab_signals:
                 if fig:
                     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
                 with st.expander("Raw values"):
-                    st.dataframe(pos_df.round(4), hide_index=True)
+                    _sdf = pos_df.round(4)
+                    st.dataframe(
+                        _sdf.style.map(
+                            lambda v: "color: #C0392B; font-weight: 600; background-color: rgba(239,68,68,0.08)" if isinstance(v, float) else "",
+                            subset=["impact"]
+                        ),
+                        hide_index=True,
+                    )
             else:
                 st.caption("No fraud-pushing tokens found.")
 
@@ -614,7 +756,14 @@ with tab_signals:
                 if fig2:
                     st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
                 with st.expander("Raw values"):
-                    st.dataframe(neg_df.round(4), hide_index=True)
+                    _sdf2 = neg_df.round(4)
+                    st.dataframe(
+                        _sdf2.style.map(
+                            lambda v: "color: #1A7A4A; font-weight: 600; background-color: rgba(52,211,153,0.08)" if isinstance(v, float) else "",
+                            subset=["impact"]
+                        ),
+                        hide_index=True,
+                    )
             else:
                 st.caption("No legitimacy tokens found.")
 
@@ -623,7 +772,7 @@ with tab_signals:
     # Occlusion Audit
     st.markdown(f"""
     <div style="margin-bottom:8px;">
-      <div style="font-size:16px;font-weight:700;color:{_H};font-family:'Space Grotesk',sans-serif;
+      <div style="font-size:20px;font-weight:700;color:{_H};font-family:'Plus Jakarta Sans',sans-serif;
                   letter-spacing:-0.01em;margin-bottom:4px;">Occlusion Audit</div>
       <div style="font-size:13px;color:{_S};line-height:1.65;">
         Each key phrase is masked and the model re-run. The bar shows the probability drop —
@@ -648,11 +797,17 @@ with tab_signals:
             display["impact_size"] = bucket_magnitude(display["impact"].tolist())
             display["impact"]       = display["impact"].round(4)
             display["tfidf_weight"] = display["tfidf_weight"].round(4)
+            display = display[["feature", "impact", "impact_size", "tfidf_weight"]].rename(columns={
+                "feature": "Phrase", "impact": "Impact",
+                "impact_size": "Size", "tfidf_weight": "TF-IDF weight",
+            })
+            def _occ_color(v):
+                if not isinstance(v, float): return ""
+                if v > 0:  return "color: #C0392B; font-weight: 600; background-color: rgba(239,68,68,0.08)"
+                if v < 0:  return "color: #1A7A4A; font-weight: 600; background-color: rgba(52,211,153,0.08)"
+                return ""
             st.dataframe(
-                display[["feature", "impact", "impact_size", "tfidf_weight"]].rename(columns={
-                    "feature": "Phrase", "impact": "Impact",
-                    "impact_size": "Size", "tfidf_weight": "TF-IDF weight",
-                }),
+                display.style.map(_occ_color, subset=["Impact"]),
                 hide_index=True,
             )
     else:
@@ -732,7 +887,7 @@ with tab_method:
 
     m1, m2, m3, m4 = st.columns(4)
     for _col, _label, _val, _color in [
-        (m1, "Test F1",    f"{_pf1:.3f}", "#A78BFA"),
+        (m1, "Test F1",    f"{_pf1:.3f}", "#007aff"),
         (m2, "Precision",  f"{_ppr:.3f}", "#34D399"),
         (m3, "Recall",     f"{_pre:.3f}", "#FCD34D"),
         (m4, "OOD Recall", f"{_pob:.3f}", "#06B6D4"),
@@ -745,7 +900,7 @@ with tab_method:
               <div style="font-size:11px;font-weight:600;color:{_S};text-transform:uppercase;
                           letter-spacing:0.07em;margin-bottom:6px;">{_label}</div>
               <div style="font-size:26px;font-weight:800;color:{_color};
-                          letter-spacing:-0.02em;font-family:'Space Grotesk',sans-serif;
+                          letter-spacing:-0.02em;font-family:'Plus Jakarta Sans',sans-serif;
                           text-shadow:0 0 16px {_color}44;">{_val}</div>
             </div>
             """, unsafe_allow_html=True)
@@ -759,7 +914,7 @@ with tab_method:
             st.markdown(f"""
             <div style="padding:4px 4px 0;">
             <div style="font-size:16px;font-weight:700;color:{_H};
-                        font-family:'Space Grotesk',sans-serif;margin-bottom:12px;">
+                        font-family:'Plus Jakarta Sans',sans-serif;margin-bottom:12px;">
               TextGCN Architecture
             </div>
             <div style="font-size:13px;color:{_note_col};line-height:1.75;">
@@ -795,34 +950,34 @@ with tab_method:
             st.markdown(f"""
             <div style="padding:4px 4px 0;">
             <div style="font-size:16px;font-weight:700;color:{_H};
-                        font-family:'Space Grotesk',sans-serif;margin-bottom:12px;">
+                        font-family:'Plus Jakarta Sans',sans-serif;margin-bottom:12px;">
               Explainability Pipeline
             </div>
             <div style="font-size:13px;color:{_note_col};line-height:1.75;">
               <p style="margin:0 0 10px;">Three complementary techniques produce the explanation:</p>
               <p style="margin:0 0 8px;">
-                <span style="background:rgba(139,92,246,0.15);color:#A78BFA;font-weight:600;
+                <span style="background:rgba(0,122,255,0.1);color:#007aff;font-weight:600;
                              padding:1px 8px;border-radius:6px;font-size:11px;">1</span>
                 <b style="color:{_H};margin-left:6px;">SHAP</b>
                 — perturbs the token space and assigns marginal credit to each word
                 using cooperative game theory.
               </p>
               <p style="margin:0 0 8px;">
-                <span style="background:rgba(139,92,246,0.15);color:#A78BFA;font-weight:600;
+                <span style="background:rgba(0,122,255,0.1);color:#007aff;font-weight:600;
                              padding:1px 8px;border-radius:6px;font-size:11px;">2</span>
                 <b style="color:{_H};margin-left:6px;">Occlusion Audit</b>
                 — masks key phrases individually and measures the probability drop,
                 providing a phrase-level view of fraud drivers.
               </p>
               <p style="margin:0 0 8px;">
-                <span style="background:rgba(139,92,246,0.15);color:#A78BFA;font-weight:600;
+                <span style="background:rgba(0,122,255,0.1);color:#007aff;font-weight:600;
                              padding:1px 8px;border-radius:6px;font-size:11px;">3</span>
                 <b style="color:{_H};margin-left:6px;">Token Highlights</b>
                 — maps SHAP-attributed tokens directly onto the posting text
                 for an inline visual explanation.
               </p>
               <p style="margin:0;">
-                <span style="background:rgba(139,92,246,0.15);color:#A78BFA;font-weight:600;
+                <span style="background:rgba(0,122,255,0.1);color:#007aff;font-weight:600;
                              padding:1px 8px;border-radius:6px;font-size:11px;">4</span>
                 <b style="color:{_H};margin-left:6px;">MC Dropout</b>
                 — runs inference with dropout active (n = 8–24 samples) to estimate
@@ -838,7 +993,7 @@ with tab_method:
         st.markdown(f"""
         <div style="padding:4px 4px 0;">
         <div style="font-size:16px;font-weight:700;color:{_H};
-                    font-family:'Space Grotesk',sans-serif;margin-bottom:12px;">
+                    font-family:'Plus Jakarta Sans',sans-serif;margin-bottom:12px;">
           Dataset &amp; Evaluation
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;

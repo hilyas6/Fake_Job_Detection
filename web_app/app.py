@@ -1,3 +1,7 @@
+# ── JobScan — Detector Page ────────────────────────────────────────────────────
+# Main Streamlit page. Accepts a job title + description, runs the TextGCN model,
+# and displays the fraud verdict, risk gauge, confidence range, and top SHAP signals.
+# Results are stored in st.session_state so the Explainability page can read them.
 from __future__ import annotations
 
 import json
@@ -21,109 +25,38 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ── Theme state ──────────────────────────────────────────────────────────────
-if "dark_mode" not in st.session_state:
-    st.session_state.dark_mode = True
-dark_mode = st.session_state.dark_mode
-
-# Handle theme toggle via query param (desired state encoded in URL)
-_qp = st.query_params.get("set_theme", "")
-if _qp == "light":
-    st.session_state.dark_mode = False
-    st.query_params.clear()
-    st.rerun()
-elif _qp == "dark":
-    st.session_state.dark_mode = True
-    st.query_params.clear()
-    st.rerun()
-
-def get_css(dark: bool) -> str:
-    if dark:
-        bg = """
-            radial-gradient(ellipse 80% 65% at 0% 0%,   rgba(139,92,246,0.30) 0%, transparent 52%),
-            radial-gradient(ellipse 65% 65% at 100% 100%,rgba(6,182,212,0.22) 0%, transparent 52%),
-            radial-gradient(ellipse 55% 45% at 50% 50%, rgba(16,185,129,0.07) 0%, transparent 50%),
-            radial-gradient(ellipse 40% 40% at 80% 20%, rgba(236,72,153,0.10) 0%, transparent 45%),
-            linear-gradient(160deg,#07070F 0%,#0A0A16 50%,#060B14 100%)"""
-        text_primary   = "#F1F5F9"
-        text_secondary = "#94A3B8"
-        text_muted     = "#64748B"
-        card_bg_pb     = "rgba(10,10,22,0.38)"
-        input_bg       = "rgba(255,255,255,0.05)"
-        input_border   = "rgba(255,255,255,0.1)"
-        input_color    = "#F1F5F9"
-        input_ph       = "rgba(148,163,184,0.45)"
-        label_color    = "#94A3B8"
-        tab_list_bg    = "rgba(255,255,255,0.05)"
-        tab_list_border= "rgba(255,255,255,0.08)"
-        tab_color      = "rgba(148,163,184,0.8)"
-        tab_hover_bg   = "rgba(139,92,246,0.12)"
-        tab_hover_color= "#C4B5FD"
-        tab_active_bg  = "rgba(139,92,246,0.2)"
-        tab_active_col = "#DDD6FE"
-        hdr_bg         = "rgba(7,7,15,0.84)"
-        hdr_border     = "rgba(255,255,255,0.07)"
-        hdr_shadow     = "0 1px 0 rgba(255,255,255,0.05),0 4px 32px rgba(0,0,0,0.5)"
-        scroll_track   = "rgba(255,255,255,0.03)"
-        sbtn_bg        = "rgba(255,255,255,0.05)"
-        sbtn_color     = "#A78BFA"
-        sbtn_border    = "rgba(167,139,250,0.28)"
-        sbtn_hov_bg    = "rgba(139,92,246,0.14)"
-        sbtn_hov_col   = "#C4B5FD"
-        sbtn_hov_bdr   = "rgba(139,92,246,0.5)"
-        theme_btn_bg   = "rgba(255,255,255,0.07)"
-        theme_btn_col  = "#E2E8F0"
-        theme_btn_bdr  = "rgba(255,255,255,0.15)"
-        df_border      = "rgba(255,255,255,0.09)"
-        checkbox_col   = "#94A3B8"
-    else:
-        bg = """
-            radial-gradient(ellipse 80% 65% at 0% 0%,   rgba(139,92,246,0.12) 0%, transparent 52%),
-            radial-gradient(ellipse 65% 65% at 100% 100%,rgba(6,182,212,0.10) 0%, transparent 52%),
-            radial-gradient(ellipse 55% 45% at 50% 50%, rgba(16,185,129,0.05) 0%, transparent 50%),
-            radial-gradient(ellipse 40% 40% at 80% 20%, rgba(236,72,153,0.06) 0%, transparent 45%),
-            linear-gradient(160deg,#EEF2FF 0%,#F8FAFC 50%,#F0FDF4 100%)"""
-        text_primary   = "#0F172A"
-        text_secondary = "#374151"
-        text_muted     = "#64748B"
-        card_bg_pb     = "rgba(255,255,255,0.55)"
-        input_bg       = "rgba(255,255,255,0.85)"
-        input_border   = "rgba(139,92,246,0.2)"
-        input_color    = "#0F172A"
-        input_ph       = "rgba(100,116,139,0.5)"
-        label_color    = "#374151"
-        tab_list_bg    = "rgba(255,255,255,0.6)"
-        tab_list_border= "rgba(139,92,246,0.15)"
-        tab_color      = "#64748B"
-        tab_hover_bg   = "rgba(139,92,246,0.08)"
-        tab_hover_color= "#7C3AED"
-        tab_active_bg  = "rgba(139,92,246,0.14)"
-        tab_active_col = "#5B21B6"
-        hdr_bg         = "rgba(255,255,255,0.80)"
-        hdr_border     = "rgba(139,92,246,0.15)"
-        hdr_shadow     = "0 1px 0 rgba(139,92,246,0.1),0 4px 24px rgba(0,0,0,0.06)"
-        scroll_track   = "rgba(0,0,0,0.04)"
-        sbtn_bg        = "rgba(255,255,255,0.8)"
-        sbtn_color     = "#5B21B6"
-        sbtn_border    = "rgba(139,92,246,0.3)"
-        sbtn_hov_bg    = "rgba(139,92,246,0.08)"
-        sbtn_hov_col   = "#4C1D95"
-        sbtn_hov_bdr   = "rgba(139,92,246,0.55)"
-        theme_btn_bg   = "rgba(139,92,246,0.1)"
-        theme_btn_col  = "#4C1D95"
-        theme_btn_bdr  = "rgba(139,92,246,0.3)"
-        df_border      = "rgba(139,92,246,0.15)"
-        checkbox_col   = "#374151"
-
-    card_border_gradient = (
-        "linear-gradient(135deg,rgba(139,92,246,0.65),rgba(6,182,212,0.55),"
-        "rgba(236,72,153,0.45),rgba(16,185,129,0.45),rgba(139,92,246,0.65))"
-    )
+def get_css() -> str:
+    """Return all page CSS as a single <style> block (iOS light design system)."""
+    bg             = "#f2f2f7"
+    text_primary   = "#1c1c1e"
+    card_bg_pb     = "#ffffff"
+    input_bg       = "#ffffff"
+    input_border   = "rgba(60,60,67,0.18)"
+    input_color    = "#1c1c1e"
+    input_ph       = "rgba(60,60,67,0.35)"
+    label_color    = "#1c1c1e"
+    tab_list_bg    = "rgba(118,118,128,0.12)"
+    tab_list_border= "transparent"
+    tab_color      = "#3c3c43"
+    tab_hover_bg   = "rgba(0,122,255,0.08)"
+    tab_hover_color= "#007aff"
+    tab_active_bg  = "#ffffff"
+    tab_active_col = "#000000"
+    hdr_bg         = "rgba(242,242,247,0.95)"
+    hdr_border     = "rgba(60,60,67,0.18)"
+    hdr_shadow     = "0 1px 0 rgba(60,60,67,0.12),0 4px 16px rgba(0,0,0,0.05)"
+    scroll_track   = "rgba(0,0,0,0.04)"
+    sbtn_bg        = "#ffffff"
+    sbtn_color     = "#007aff"
+    sbtn_border    = "rgba(0,122,255,0.3)"
+    sbtn_hov_bg    = "rgba(0,122,255,0.08)"
+    sbtn_hov_col   = "#0056b3"
+    sbtn_hov_bdr   = "rgba(0,122,255,0.5)"
+    df_border      = "rgba(60,60,67,0.18)"
+    checkbox_col   = "#1c1c1e"
 
     return f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
-
 /* ── Flash prevention ── */
 [data-testid="stHeader"],[data-testid="stToolbar"],[data-testid="stDecoration"],
 [data-testid="stStatusWidget"],.stAppToolbar,#stDecoration,
@@ -153,9 +86,17 @@ header[data-testid="stHeader"] {{
 
 /* ── Background ── */
 html, body, .stApp {{
-    font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif !important;
+    font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important;
     background: {bg} !important;
     background-attachment: fixed !important;
+    color:{text_primary} !important;
+}}
+
+/* ── Text colour — scoped to p/li only, NOT span (avoids overriding badge colours) ── */
+.stApp .stMarkdown p, .stApp .stMarkdown li,
+.stApp [data-testid="stMarkdownContainer"] p,
+.stApp [data-testid="stMarkdownContainer"] li,
+.stApp [data-testid="stCaptionContainer"] p {{
     color:{text_primary} !important;
 }}
 
@@ -168,36 +109,38 @@ html, body, .stApp {{
 }}
 section.main > div {{ overflow:visible !important; }}
 
-/* ── Futuristic headings font ── */
-h1,h2,h3 {{
-    font-family:'Space Grotesk',sans-serif !important;
+/* ── Headings ── */
+h1,h2,h3,h4 {{
+    font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important;
     letter-spacing:-0.02em !important;
+    font-weight:700 !important;
 }}
+h1 {{ font-size:2.4rem !important; }}
+h2 {{ font-size:1.85rem !important; }}
+h3 {{ font-size:1.4rem !important; }}
 
 /* ── Primary button ── */
 .stButton > button[kind="primary"] {{
-    background: linear-gradient(135deg,#7C3AED,#4F46E5) !important;
+    background: #007aff !important;
     color:#FFFFFF !important;
     border:none !important;
-    border-radius:10px !important;
-    font-family:'Space Grotesk',sans-serif !important;
+    border-radius:14px !important;
+    font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important;
     font-weight:600 !important;
     font-size:15px !important;
     padding:0.65rem 1.6rem !important;
-    letter-spacing:0.02em !important;
-    box-shadow:0 0 14px rgba(124,58,237,0.45),0 2px 8px rgba(79,70,229,0.25),
-               inset 0 1px 0 rgba(255,255,255,0.14) !important;
+    letter-spacing:0.01em !important;
+    box-shadow:0 2px 8px rgba(0,122,255,0.25) !important;
     transition:all 0.22s cubic-bezier(0.16,1,0.3,1) !important;
 }}
 .stButton > button[kind="primary"]:hover {{
-    background: linear-gradient(135deg,#8B5CF6,#6D28D9) !important;
-    box-shadow:0 0 22px rgba(139,92,246,0.52),0 4px 14px rgba(79,70,229,0.3),
-               inset 0 1px 0 rgba(255,255,255,0.18) !important;
-    transform:translateY(-2px) scale(1.01) !important;
+    background: #0056b3 !important;
+    box-shadow:0 4px 14px rgba(0,122,255,0.35) !important;
+    transform:translateY(-1px) !important;
 }}
 .stButton > button[kind="primary"]:active {{
     transform:translateY(0) scale(0.99) !important;
-    box-shadow:0 0 10px rgba(124,58,237,0.35) !important;
+    box-shadow:0 1px 4px rgba(0,122,255,0.2) !important;
     transition-duration:0.08s !important;
 }}
 
@@ -206,8 +149,8 @@ h1,h2,h3 {{
     background:{sbtn_bg} !important;
     color:{sbtn_color} !important;
     border:1px solid {sbtn_border} !important;
-    border-radius:10px !important;
-    font-family:'Space Grotesk',sans-serif !important;
+    border-radius:14px !important;
+    font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important;
     font-weight:500 !important;
     font-size:14px !important;
     box-shadow:none !important;
@@ -217,7 +160,6 @@ h1,h2,h3 {{
     background:{sbtn_hov_bg} !important;
     border-color:{sbtn_hov_bdr} !important;
     color:{sbtn_hov_col} !important;
-    box-shadow:0 0 14px rgba(139,92,246,0.22) !important;
     transform:translateY(-1px) !important;
 }}
 .stButton > button[kind="secondary"]:active {{
@@ -232,36 +174,36 @@ h1,h2,h3 {{
     justify-content:center !important;
     width:100% !important;
     gap:6px !important;
-    background:linear-gradient(135deg,#7C3AED,#4F46E5) !important;
-    color:#FFFFFF !important;
+    background:#007aff !important;
+    color:#ffffff !important;
     padding:10px 20px !important;
-    border-radius:10px !important;
-    font-family:'Space Grotesk',sans-serif !important;
+    border-radius:14px !important;
+    font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important;
     font-weight:600 !important;
     font-size:14px !important;
     text-decoration:none !important;
     border:none !important;
-    box-shadow:0 0 14px rgba(124,58,237,0.42) !important;
+    box-shadow:0 2px 8px rgba(0,122,255,0.25) !important;
     transition:all 0.22s cubic-bezier(0.16,1,0.3,1) !important;
-    letter-spacing:0.02em !important;
+    letter-spacing:0.01em !important;
 }}
 [data-testid="stPageLink"] a:hover {{
-    background:linear-gradient(135deg,#8B5CF6,#6D28D9) !important;
-    box-shadow:0 0 22px rgba(139,92,246,0.52) !important;
-    transform:translateY(-2px) !important;
-    color:#FFFFFF !important;
+    background:#0056b3 !important;
+    box-shadow:0 4px 14px rgba(0,122,255,0.35) !important;
+    transform:translateY(-1px) !important;
+    color:#ffffff !important;
 }}
 [data-testid="stPageLink"] a:active {{
     transform:translateY(0) !important;
     transition-duration:0.08s !important;
 }}
 
-/* ── Inputs (NOT liquid glass — kept clean) ── */
+/* ── Inputs ── */
 .stTextInput > div > div > input,
 .stTextArea > div > div > textarea {{
     border-radius:10px !important;
     border:1px solid {input_border} !important;
-    font-family:'Inter',sans-serif !important;
+    font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important;
     font-size:14px !important;
     background:{input_bg} !important;
     color:{input_color} !important;
@@ -271,12 +213,12 @@ h1,h2,h3 {{
 .stTextArea > div > div > textarea {{ line-height:1.75 !important; resize:vertical !important; }}
 .stTextInput > div > div > input:focus,
 .stTextArea > div > div > textarea:focus {{
-    border-color:rgba(139,92,246,0.7) !important;
-    box-shadow:0 0 0 3px rgba(139,92,246,0.18),0 0 12px rgba(139,92,246,0.12) !important;
+    border-color:#007aff !important;
+    box-shadow:0 0 0 3px rgba(0,122,255,0.15) !important;
     outline:none !important;
 }}
 .stTextInput label,.stTextArea label {{
-    font-family:'Space Grotesk',sans-serif !important;
+    font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important;
     font-weight:600 !important;
     font-size:14px !important;
     color:{label_color} !important;
@@ -285,42 +227,30 @@ h1,h2,h3 {{
 .stTextInput > div > div > input::placeholder,
 .stTextArea > div > div > textarea::placeholder {{ color:{input_ph} !important; }}
 
-/* ── Liquid glass cards ── */
+/* ── Cards ── */
 [data-testid="stVerticalBlockBorderWrapper"] {{
-    border-radius:20px !important;
-    background:
-        linear-gradient({card_bg_pb},{card_bg_pb}) padding-box,
-        {card_border_gradient} border-box !important;
-    border:1px solid transparent !important;
-    backdrop-filter:blur(28px) saturate(180%) !important;
-    -webkit-backdrop-filter:blur(28px) saturate(180%) !important;
-    box-shadow:
-        0 8px 40px rgba(0,0,0,0.35),
-        inset 0 1px 0 rgba(255,255,255,0.22),
-        inset 0 -1px 0 rgba(0,0,0,0.08) !important;
+    border-radius:16px !important;
+    background:{card_bg_pb} !important;
+    border:none !important;
+    box-shadow:0 1px 3px rgba(0,0,0,0.08),0 4px 16px rgba(0,0,0,0.06) !important;
     animation:cardIn 0.45s cubic-bezier(0.16,1,0.3,1) both !important;
     transition:box-shadow 0.3s ease !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:hover {{
-    box-shadow:
-        0 12px 50px rgba(0,0,0,0.42),
-        0 0 28px rgba(139,92,246,0.12),
-        inset 0 1px 0 rgba(255,255,255,0.28),
-        inset 0 -1px 0 rgba(0,0,0,0.08) !important;
+    box-shadow:0 2px 6px rgba(0,0,0,0.10),0 8px 28px rgba(0,0,0,0.09) !important;
 }}
 
-/* ── Tabs ── */
+/* ── Tabs (iOS segmented control) ── */
 .stTabs [data-baseweb="tab-list"] {{
     background:{tab_list_bg} !important;
     border-radius:12px !important;
     padding:4px !important;
     gap:2px !important;
     border:1px solid {tab_list_border} !important;
-    backdrop-filter:blur(12px) !important;
 }}
 .stTabs [data-baseweb="tab"] {{
     border-radius:9px !important;
-    font-family:'Space Grotesk',sans-serif !important;
+    font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important;
     font-weight:500 !important;
     font-size:14px !important;
     color:{tab_color} !important;
@@ -335,14 +265,14 @@ h1,h2,h3 {{
 .stTabs [aria-selected="true"] {{
     background:{tab_active_bg} !important;
     color:{tab_active_col} !important;
-    box-shadow:0 0 12px rgba(139,92,246,0.22),inset 0 1px 0 rgba(255,255,255,0.1) !important;
+    box-shadow:0 1px 3px rgba(0,0,0,0.12),0 1px 2px rgba(0,0,0,0.08) !important;
     font-weight:600 !important;
 }}
 .stTabs [data-baseweb="tab-highlight"],
 .stTabs [data-baseweb="tab-border"] {{ display:none !important; }}
 
 /* ── Misc ── */
-[data-testid="stSpinner"] > div {{ color:#A78BFA !important; }}
+[data-testid="stSpinner"] > div {{ color:#007aff !important; }}
 .stAlert {{ border-radius:12px !important; font-size:14px !important; }}
 .stCheckbox label, .stToggle label {{ color:{checkbox_col} !important; font-size:14px !important; }}
 .stRadio label {{ color:{checkbox_col} !important; font-size:14px !important; }}
@@ -350,19 +280,20 @@ h1,h2,h3 {{
     border-radius:12px !important;
     border:1px solid {df_border} !important;
     overflow:hidden !important;
-    box-shadow:0 2px 16px rgba(0,0,0,0.2) !important;
+    box-shadow:0 1px 4px rgba(0,0,0,0.06) !important;
 }}
 ::-webkit-scrollbar {{ width:6px; height:6px; }}
 ::-webkit-scrollbar-track {{ background:{scroll_track}; border-radius:3px; }}
-::-webkit-scrollbar-thumb {{ background:rgba(139,92,246,0.38); border-radius:3px; }}
-::-webkit-scrollbar-thumb:hover {{ background:rgba(139,92,246,0.58); }}
+::-webkit-scrollbar-thumb {{ background:rgba(0,0,0,0.2); border-radius:3px; }}
+::-webkit-scrollbar-thumb:hover {{ background:rgba(0,0,0,0.35); }}
 </style>
 """
 
-st.markdown(get_css(dark_mode), unsafe_allow_html=True)
+st.markdown(get_css(), unsafe_allow_html=True)
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+# ── Risk-colour helpers ─────────────────────────────────────────────────────────
+# Map a fraud probability to a traffic-light colour (red / amber / green).
 def risk_color(prob: float) -> str:
     if prob >= 0.65: return "#F87171"
     if prob >= 0.40: return "#FCD34D"
@@ -386,7 +317,7 @@ def gauge_html(prob: float) -> str:
     return f"""
     <div style="margin:12px 0 8px;">
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;">
-        <span style="font-size:12px;font-weight:600;color:#64748B;
+        <span style="font-size:12px;font-weight:600;color:#8e8e93;
                      text-transform:uppercase;letter-spacing:0.07em;">Risk Score</span>
         <span style="font-size:30px;font-weight:800;color:{color};
                      letter-spacing:-0.03em;line-height:1;
@@ -398,14 +329,14 @@ def gauge_html(prob: float) -> str:
         <div style="position:absolute;top:50%;left:{marker}%;
                     transform:translate(-50%,-50%);
                     width:20px;height:20px;border-radius:50%;
-                    background:#1A1A2E;border:2.5px solid {color};
-                    box-shadow:0 0 10px {color}99,0 2px 8px rgba(0,0,0,0.4);
+                    background:#ffffff;border:2.5px solid {color};
+                    box-shadow:0 0 10px {color}99,0 2px 8px rgba(0,0,0,0.15);
                     transition:left 0.6s cubic-bezier(0.16,1,0.3,1);"></div>
       </div>
       <div style="display:flex;justify-content:space-between;margin-top:6px;">
-        <span style="font-size:11px;color:#64748B;font-weight:500;">Low</span>
-        <span style="font-size:11px;color:#64748B;font-weight:500;">Uncertain</span>
-        <span style="font-size:11px;color:#64748B;font-weight:500;">High</span>
+        <span style="font-size:11px;color:#8e8e93;font-weight:500;">Low</span>
+        <span style="font-size:11px;color:#8e8e93;font-weight:500;">Uncertain</span>
+        <span style="font-size:11px;color:#8e8e93;font-weight:500;">High</span>
       </div>
     </div>
     """
@@ -431,16 +362,17 @@ def verdict_html(label: str, fake_prob: float, runtime_ms: float) -> str:
             <div style="width:10px;height:10px;border-radius:50%;
                         background:{dot};flex-shrink:0;
                         animation:pulseDot 2.5s infinite;"></div>
-            <span style="font-size:17px;font-weight:700;color:{accent};
-                         letter-spacing:-0.01em;
+            <span style="font-size:20px;font-weight:700;color:{accent};
+                         font-family:'Plus Jakarta Sans',sans-serif;
+                         letter-spacing:-0.02em;
                          text-shadow:0 0 12px {accent}55;">{verdict}</span>
           </div>
-          <div style="font-size:13px;color:#94A3B8;font-weight:400;
+          <div style="font-size:13px;color:#3c3c43;font-weight:400;
                       padding-left:20px;line-height:1.5;">{sub}</div>
         </div>
         <div style="text-align:right;min-width:56px;padding-left:16px;flex-shrink:0;">
-          <div style="font-size:11px;color:#64748B;font-weight:500;">analysed in</div>
-          <div style="font-size:13px;font-weight:700;color:#CBD5E1;
+          <div style="font-size:11px;color:#8e8e93;font-weight:500;">analysed in</div>
+          <div style="font-size:13px;font-weight:700;color:#3c3c43;
                       margin-top:2px;">{runtime_ms:.0f} ms</div>
         </div>
       </div>
@@ -455,18 +387,17 @@ def signal_chip_html(sig: dict) -> str:
     tag_text = "Increases risk"        if is_fake else "Reduces risk"
     impact   = abs(sig.get("impact", 0.0))
     return f"""
-    <div style="background:rgba(255,255,255,0.04);
-                border:1px solid rgba(255,255,255,0.09);
+    <div style="background:#f2f2f7;
+                border:1px solid rgba(60,60,67,0.12);
                 border-left:3px solid {accent};border-radius:12px;
                 padding:10px 15px;margin-bottom:7px;
-                backdrop-filter:blur(12px);
-                box-shadow:0 2px 12px rgba(0,0,0,0.3),0 0 8px {accent}22;
+                box-shadow:0 1px 4px rgba(0,0,0,0.06);
                 animation:fadeSlideUp 0.4s cubic-bezier(0.16,1,0.3,1) both;">
       <div style="display:flex;align-items:center;gap:8px;">
-        <span style="font-size:13px;font-weight:600;color:#E2E8F0;flex:1;min-width:0;">
+        <span style="font-size:13px;font-weight:600;color:#1c1c1e;flex:1;min-width:0;">
           {sig['feature']}
         </span>
-        <span style="font-size:11px;color:#94A3B8;font-weight:500;">
+        <span style="font-size:11px;color:#8e8e93;font-weight:500;">
           impact {impact:.3f}
         </span>
         <span style="background:{tag_bg};color:{accent};font-size:11px;
@@ -483,24 +414,25 @@ def empty_state_html() -> str:
                 justify-content:center;height:440px;text-align:center;padding:2rem;
                 animation:fadeIn 0.6s ease both;">
       <div style="width:64px;height:64px;border-radius:16px;
-                  background:rgba(139,92,246,0.12);
-                  border:1px solid rgba(139,92,246,0.35);
+                  background:rgba(0,122,255,0.1);
+                  border:1px solid rgba(0,122,255,0.3);
                   display:flex;align-items:center;justify-content:center;
                   margin-bottom:20px;
-                  box-shadow:0 0 28px rgba(139,92,246,0.2),inset 0 1px 0 rgba(255,255,255,0.06);">
+                  box-shadow:0 2px 12px rgba(0,122,255,0.1);">
         <div style="width:28px;height:28px;border-radius:50%;
-                    border:2.5px solid rgba(139,92,246,0.6);"></div>
+                    border:2.5px solid #007aff;"></div>
       </div>
-      <div style="font-size:16px;font-weight:600;color:#64748B;margin-bottom:8px;">
+      <div style="font-size:16px;font-weight:600;color:#8e8e93;margin-bottom:8px;">
         No analysis yet
       </div>
-      <div style="font-size:13px;color:#475569;max-width:220px;line-height:1.7;font-weight:400;">
+      <div style="font-size:13px;color:#3c3c43;max-width:220px;line-height:1.7;font-weight:400;">
         Paste a job posting on the left and click Analyse to see results here.
       </div>
     </div>
     """
 
 
+# ── Built-in example postings ───────────────────────────────────────────────────
 EXAMPLES = {
     "Suspicious": {
         "title": "Remote Data Entry Clerk – Immediate Hire",
@@ -522,9 +454,11 @@ EXAMPLES = {
     },
 }
 
+# ── Session state defaults ──────────────────────────────────────────────────────
 if "detector_input" not in st.session_state:
     st.session_state.detector_input = {"title": "", "description": ""}
 
+# ── Load model (cached across reruns) ──────────────────────────────────────────
 try:
     service = load_model()
     st.session_state.model_signature = service.model_signature
@@ -537,16 +471,14 @@ except Exception as exc:
 # ═══════════════════════════════════════════════════════════════════════════════
 # Header
 # ═══════════════════════════════════════════════════════════════════════════════
-_hdr_text   = "#F1F5F9" if dark_mode else "#0F172A"
-_hdr_sub    = "#64748B"
-_hdr_badge  = "rgba(255,255,255,0.07)" if dark_mode else "rgba(139,92,246,0.08)"
-_hdr_bbdr   = "rgba(255,255,255,0.12)" if dark_mode else "rgba(139,92,246,0.2)"
-_hdr_bcol   = "#94A3B8" if dark_mode else "#5B21B6"
-_hdr_bg     = "rgba(7,7,15,0.84)" if dark_mode else "rgba(255,255,255,0.82)"
-_hdr_border = "rgba(255,255,255,0.07)" if dark_mode else "rgba(139,92,246,0.15)"
-_hdr_shadow = "0 1px 0 rgba(255,255,255,0.05),0 4px 32px rgba(0,0,0,0.5)" if dark_mode else "0 1px 0 rgba(139,92,246,0.1),0 4px 24px rgba(0,0,0,0.06)"
-_glow       = "0 0 20px rgba(124,58,237,0.6),0 4px 12px rgba(79,70,229,0.4)"
-_name_shadow= "0 0 20px rgba(139,92,246,0.4)" if dark_mode else "none"
+_hdr_text   = "#1c1c1e"
+_hdr_sub    = "#8e8e93"
+_hdr_badge  = "rgba(0,122,255,0.1)"
+_hdr_bbdr   = "rgba(0,122,255,0.25)"
+_hdr_bcol   = "#007aff"
+_hdr_bg     = "rgba(242,242,247,0.95)"
+_hdr_border = "rgba(60,60,67,0.18)"
+_hdr_shadow = "0 1px 0 rgba(60,60,67,0.12),0 4px 16px rgba(0,0,0,0.05)"
 
 st.markdown(f"""
 <div style="background:{_hdr_bg};
@@ -560,44 +492,28 @@ st.markdown(f"""
     <div style="width:40px;height:40px;flex-shrink:0;
                 background:linear-gradient(135deg,#7C3AED,#4F46E5);
                 border-radius:12px;display:flex;align-items:center;justify-content:center;
-                box-shadow:{_glow};">
+                box-shadow:0 0 20px rgba(124,58,237,0.5),0 4px 12px rgba(79,70,229,0.35);">
       <div style="width:18px;height:18px;background:#FFFFFF;border-radius:4px;opacity:0.95;"></div>
     </div>
     <div style="flex:1;">
-      <div style="font-size:20px;font-weight:700;color:{_hdr_text};
-                  font-family:'Space Grotesk',sans-serif;
-                  letter-spacing:-0.02em;line-height:1.2;
-                  text-shadow:{_name_shadow};">JobScan</div>
-      <div style="font-size:11px;color:{_hdr_sub};font-weight:400;
+      <div style="font-size:22px;font-weight:800;color:{_hdr_text};
+                  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif;
+                  letter-spacing:-0.02em;line-height:1.2;"">JobScan</div>
+      <div style="font-size:12px;color:{_hdr_sub};font-weight:500;
                   letter-spacing:0.02em;margin-top:1px;">Fake Job Detection</div>
     </div>
     <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
       <div style="background:{_hdr_badge};border:1px solid {_hdr_bbdr};
                   border-radius:8px;padding:5px 13px;
                   font-size:12px;font-weight:500;color:{_hdr_bcol};
-                  font-family:'Space Grotesk',sans-serif;
-                  backdrop-filter:blur(8px);">
+                  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif;">
         TextGCN · Tuned
       </div>
-      <a href="{'?set_theme=light' if dark_mode else '?set_theme=dark'}" target="_self"
-         style="display:inline-flex;align-items:center;gap:6px;
-                background:{'rgba(255,255,255,0.08)' if dark_mode else 'rgba(139,92,246,0.12)'};
-                border:1px solid {'rgba(255,255,255,0.18)' if dark_mode else 'rgba(139,92,246,0.45)'};
-                border-radius:8px;padding:5px 13px;
-                font-size:12px;font-weight:600;
-                color:{'#E2E8F0' if dark_mode else '#1E1B4B'};
-                font-family:'Space Grotesk',sans-serif;
-                backdrop-filter:blur(8px);
-                text-decoration:none;cursor:pointer;
-                transition:all 0.2s ease;">
-        {'☀' if dark_mode else '◑'}&nbsp; {'Light' if dark_mode else 'Dark'}
-      </a>
       <div style="display:flex;align-items:center;gap:7px;
                   background:rgba(52,211,153,0.10);border:1px solid rgba(52,211,153,0.35);
                   border-radius:8px;padding:5px 13px;
                   font-size:12px;font-weight:500;color:#34D399;
-                  font-family:'Space Grotesk',sans-serif;
-                  backdrop-filter:blur(8px);">
+                  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif;">
         <div style="width:7px;height:7px;border-radius:50%;background:#34D399;
                     animation:pulseDot 2s infinite;flex-shrink:0;"></div>
         Live
@@ -614,14 +530,14 @@ col_input, col_result = st.columns([5, 5], gap="large")
 
 with col_input:
     with st.container(border=True):
-        _card_title = "#E2E8F0" if dark_mode else "#0F172A"
-        _card_sub   = "#64748B" if dark_mode else "#64748B"
+        _card_title = "#1c1c1e"
+        _card_sub   = "#8e8e93"
         st.markdown(f"""
         <div style="padding:4px 4px 2px;">
-          <div style="font-size:20px;font-weight:700;color:{_card_title};
-                      font-family:'Space Grotesk',sans-serif;
-                      letter-spacing:-0.02em;margin-bottom:5px;">Analyse a Job Posting</div>
-          <div style="font-size:14px;color:{_card_sub};font-weight:400;margin-bottom:18px;
+          <div style="font-size:24px;font-weight:700;color:{_card_title};
+                      font-family:'Plus Jakarta Sans',sans-serif;
+                      letter-spacing:-0.03em;margin-bottom:6px;">Analyse a Job Posting</div>
+          <div style="font-size:15px;color:{_card_sub};font-weight:400;margin-bottom:18px;
                       line-height:1.5;">
             Paste any job posting to screen it for fraud signals.
           </div>
@@ -653,9 +569,9 @@ with col_input:
                 st.rerun()
 
         st.markdown("""
-        <div style="border-top:1px solid rgba(255,255,255,0.07);margin:18px -4px 12px;
+        <div style="border-top:1px solid rgba(60,60,67,0.12);margin:18px -4px 12px;
                     padding-top:16px;padding-left:4px;padding-right:4px;">
-          <div style="font-size:11px;font-weight:600;color:#475569;
+          <div style="font-size:11px;font-weight:600;color:#8e8e93;
                       text-transform:uppercase;letter-spacing:0.07em;margin-bottom:10px;">
             Try an example
           </div>
@@ -678,17 +594,17 @@ with col_input:
 
         st.markdown("""
         <div style="margin-top:16px;padding:10px 14px;
-                    background:rgba(255,255,255,0.03);
-                    border-radius:10px;border:1px solid rgba(255,255,255,0.07);">
-          <div style="font-size:11px;color:#475569;line-height:1.7;font-weight:400;">
-            <span style="color:#64748B;font-weight:500;">Disclaimer:</span>
+                    background:rgba(0,122,255,0.05);
+                    border-radius:10px;border:1px solid rgba(0,122,255,0.15);">
+          <div style="font-size:11px;color:#3c3c43;line-height:1.7;font-weight:400;">
+            <span style="color:#3c3c43;font-weight:500;">Disclaimer:</span>
             Automated estimate based on language patterns — not a definitive verdict.
             Always verify job postings independently.
           </div>
         </div>
         """, unsafe_allow_html=True)
 
-# ── Run analysis ───────────────────────────────────────────────────────────────
+# ── Run inference when Analyse button is clicked ───────────────────────────────
 if analyze_clicked:
     if not job_title.strip() or not job_description.strip():
         with col_input:
@@ -733,7 +649,7 @@ if analyze_clicked:
         }
         st.rerun()
 
-# ── Result panel ───────────────────────────────────────────────────────────────
+# ── Result panel — shows empty state or last prediction ────────────────────────
 with col_result:
     if "last_prediction" not in st.session_state:
         st.markdown(empty_state_html(), unsafe_allow_html=True)
@@ -758,17 +674,17 @@ with col_result:
             col_ci, col_rel = st.columns(2)
             with col_ci:
                 st.markdown(f"""
-                <div style="background:rgba(255,255,255,0.05);
-                            border:1px solid rgba(255,255,255,0.09);
+                <div style="background:#f2f2f7;
+                            border:1px solid rgba(60,60,67,0.12);
                             border-radius:12px;padding:14px 16px;
-                            box-shadow:0 2px 16px rgba(0,0,0,0.35);">
-                  <div style="font-size:11px;font-weight:600;color:#64748B;
+                            box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+                  <div style="font-size:11px;font-weight:600;color:#8e8e93;
                               text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">
                     Confidence range
                   </div>
-                  <div style="font-size:18px;font-weight:700;color:#E2E8F0;
+                  <div style="font-size:18px;font-weight:700;color:#1c1c1e;
                               letter-spacing:-0.02em;">{p['ci_low']:.0%} – {p['ci_high']:.0%}</div>
-                  <div style="font-size:11px;color:#475569;margin-top:3px;">10th – 90th percentile</div>
+                  <div style="font-size:11px;color:#3c3c43;margin-top:3px;">10th – 90th percentile</div>
                 </div>
                 """, unsafe_allow_html=True)
             with col_rel:
@@ -778,18 +694,18 @@ with col_result:
                     "Medium": ("rgba(251,191,36,0.10)","rgba(251,191,36,0.3)","#FCD34D"),
                     "Low":    ("rgba(239,68,68,0.10)","rgba(239,68,68,0.3)","#F87171"),
                 }
-                b_bg, b_border, b_fg = b_styles.get(bucket, ("rgba(255,255,255,0.05)","rgba(255,255,255,0.09)","#94A3B8"))
+                b_bg, b_border, b_fg = b_styles.get(bucket, ("#f2f2f7","rgba(60,60,67,0.12)","#8e8e93"))
                 st.markdown(f"""
                 <div style="background:{b_bg};border:1px solid {b_border};
                             border-radius:12px;padding:14px 16px;
-                            box-shadow:0 2px 16px rgba(0,0,0,0.35),0 0 12px {b_fg}22;">
-                  <div style="font-size:11px;font-weight:600;color:#64748B;
+                            box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+                  <div style="font-size:11px;font-weight:600;color:#8e8e93;
                               text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">
                     Reliability
                   </div>
                   <div style="font-size:18px;font-weight:700;color:{b_fg};
-                              letter-spacing:-0.02em;text-shadow:0 0 10px {b_fg}66;">{bucket}</div>
-                  <div style="font-size:11px;color:#475569;margin-top:3px;line-height:1.4;">
+                              letter-spacing:-0.02em;">{bucket}</div>
+                  <div style="font-size:11px;color:#3c3c43;margin-top:3px;line-height:1.4;">
                     {p.get('reliability_msg','')}
                   </div>
                 </div>
@@ -806,14 +722,13 @@ with col_result:
                 """, unsafe_allow_html=True)
 
             if signals:
-                _sig_title = "#E2E8F0" if dark_mode else "#0F172A"
                 st.markdown(f"""
                 <div style="margin-top:18px;margin-bottom:10px;">
-                  <div style="font-size:16px;font-weight:700;color:{_sig_title};
-                              font-family:'Space Grotesk',sans-serif;letter-spacing:-0.02em;">
+                  <div style="font-size:16px;font-weight:700;color:#1c1c1e;
+                              font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif;letter-spacing:-0.02em;">
                     Top signals detected
                   </div>
-                  <div style="font-size:13px;color:#64748B;margin-top:2px;font-weight:400;">
+                  <div style="font-size:13px;color:#8e8e93;margin-top:2px;font-weight:400;">
                     Tokens that most influenced this result
                   </div>
                 </div>
