@@ -1,7 +1,6 @@
-# ── JobScan — Detector Page ────────────────────────────────────────────────────
-# Main Streamlit page. Accepts a job title + description, runs the TextGCN model,
-# and displays the fraud verdict, risk gauge, confidence range, and top SHAP signals.
-# Results are stored in st.session_state so the Explainability page can read them.
+# app.py — JobScan detector page
+# Accepts a job title + description, runs TextGCN, displays verdict and top SHAP signals.
+# Results stored in st.session_state so the Explainability page can read them.
 from __future__ import annotations
 
 import json
@@ -25,8 +24,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# Return all page CSS as a single <style> block (iOS light design system)
 def get_css() -> str:
-    """Return all page CSS as a single <style> block (iOS light design system)."""
     bg             = "#f2f2f7"
     text_primary   = "#1c1c1e"
     card_bg_pb     = "#ffffff"
@@ -57,7 +56,7 @@ def get_css() -> str:
 
     return f"""
 <style>
-/* ── Flash prevention ── */
+/* Flash prevention */
 [data-testid="stHeader"],[data-testid="stToolbar"],[data-testid="stDecoration"],
 [data-testid="stStatusWidget"],.stAppToolbar,#stDecoration,
 header[data-testid="stHeader"] {{
@@ -67,7 +66,7 @@ header[data-testid="stHeader"] {{
 [data-testid="stSidebar"],[data-testid="collapsedControl"]{{display:none !important;}}
 #MainMenu,footer,.stDeployButton{{display:none !important;}}
 
-/* ── Keyframes ── */
+/* Keyframes */
 @keyframes fadeSlideUp {{
   from {{ opacity:0; transform:translateY(18px); }}
   to   {{ opacity:1; transform:translateY(0); }}
@@ -84,7 +83,7 @@ header[data-testid="stHeader"] {{
   to   {{ opacity:1; transform:translateY(0) scale(1); }}
 }}
 
-/* ── Background ── */
+/* Background */
 html, body, .stApp {{
     font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important;
     background: {bg} !important;
@@ -92,7 +91,7 @@ html, body, .stApp {{
     color:{text_primary} !important;
 }}
 
-/* ── Text colour — scoped to p/li only, NOT span (avoids overriding badge colours) ── */
+/* Text colour — scoped to p/li only, NOT span (avoids overriding badge colours) */
 .stApp .stMarkdown p, .stApp .stMarkdown li,
 .stApp [data-testid="stMarkdownContainer"] p,
 .stApp [data-testid="stMarkdownContainer"] li,
@@ -100,7 +99,7 @@ html, body, .stApp {{
     color:{text_primary} !important;
 }}
 
-/* ── Layout ── */
+/* Layout */
 .block-container {{
     padding-top:0 !important;
     padding-bottom:5rem !important;
@@ -109,7 +108,7 @@ html, body, .stApp {{
 }}
 section.main > div {{ overflow:visible !important; }}
 
-/* ── Headings ── */
+/* Headings */
 h1,h2,h3,h4 {{
     font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Arial,sans-serif !important;
     letter-spacing:-0.02em !important;
@@ -119,7 +118,7 @@ h1 {{ font-size:2.4rem !important; }}
 h2 {{ font-size:1.85rem !important; }}
 h3 {{ font-size:1.4rem !important; }}
 
-/* ── Primary button ── */
+/* Primary button */
 .stButton > button[kind="primary"] {{
     background: #007aff !important;
     color:#FFFFFF !important;
@@ -144,7 +143,7 @@ h3 {{ font-size:1.4rem !important; }}
     transition-duration:0.08s !important;
 }}
 
-/* ── Secondary button ── */
+/* Secondary button */
 .stButton > button[kind="secondary"] {{
     background:{sbtn_bg} !important;
     color:{sbtn_color} !important;
@@ -167,7 +166,7 @@ h3 {{ font-size:1.4rem !important; }}
     transition-duration:0.08s !important;
 }}
 
-/* ── Page link ── */
+/* Page link */
 [data-testid="stPageLink"] a {{
     display:inline-flex !important;
     align-items:center !important;
@@ -198,7 +197,7 @@ h3 {{ font-size:1.4rem !important; }}
     transition-duration:0.08s !important;
 }}
 
-/* ── Inputs ── */
+/* Inputs */
 .stTextInput > div > div > input,
 .stTextArea > div > div > textarea {{
     border-radius:10px !important;
@@ -227,7 +226,7 @@ h3 {{ font-size:1.4rem !important; }}
 .stTextInput > div > div > input::placeholder,
 .stTextArea > div > div > textarea::placeholder {{ color:{input_ph} !important; }}
 
-/* ── Cards ── */
+/* Cards */
 [data-testid="stVerticalBlockBorderWrapper"] {{
     border-radius:16px !important;
     background:{card_bg_pb} !important;
@@ -240,7 +239,7 @@ h3 {{ font-size:1.4rem !important; }}
     box-shadow:0 2px 6px rgba(0,0,0,0.10),0 8px 28px rgba(0,0,0,0.09) !important;
 }}
 
-/* ── Tabs (iOS segmented control) ── */
+/* Tabs (iOS segmented control) */
 .stTabs [data-baseweb="tab-list"] {{
     background:{tab_list_bg} !important;
     border-radius:12px !important;
@@ -271,7 +270,7 @@ h3 {{ font-size:1.4rem !important; }}
 .stTabs [data-baseweb="tab-highlight"],
 .stTabs [data-baseweb="tab-border"] {{ display:none !important; }}
 
-/* ── Misc ── */
+/* Misc */
 [data-testid="stSpinner"] > div {{ color:#007aff !important; }}
 .stAlert {{ border-radius:12px !important; font-size:14px !important; }}
 .stCheckbox label, .stToggle label {{ color:{checkbox_col} !important; font-size:14px !important; }}
@@ -292,8 +291,7 @@ h3 {{ font-size:1.4rem !important; }}
 st.markdown(get_css(), unsafe_allow_html=True)
 
 
-# ── Risk-colour helpers ─────────────────────────────────────────────────────────
-# Map a fraud probability to a traffic-light colour (red / amber / green).
+# Map fraud probability to traffic-light colour
 def risk_color(prob: float) -> str:
     if prob >= 0.65: return "#F87171"
     if prob >= 0.40: return "#FCD34D"
@@ -432,7 +430,7 @@ def empty_state_html() -> str:
     """
 
 
-# ── Built-in example postings ───────────────────────────────────────────────────
+# Built-in example postings
 EXAMPLES = {
     "Suspicious": {
         "title": "Remote Data Entry Clerk – Immediate Hire",
@@ -454,11 +452,11 @@ EXAMPLES = {
     },
 }
 
-# ── Session state defaults ──────────────────────────────────────────────────────
+# Session state defaults
 if "detector_input" not in st.session_state:
     st.session_state.detector_input = {"title": "", "description": ""}
 
-# ── Load model (cached across reruns) ──────────────────────────────────────────
+# Load model (cached across reruns)
 try:
     service = load_model()
     st.session_state.model_signature = service.model_signature
@@ -468,9 +466,7 @@ except Exception as exc:
     st.exception(exc)
     st.stop()
 
-# ═══════════════════════════════════════════════════════════════════════════════
 # Header
-# ═══════════════════════════════════════════════════════════════════════════════
 _hdr_text   = "#1c1c1e"
 _hdr_sub    = "#8e8e93"
 _hdr_badge  = "rgba(0,122,255,0.1)"
@@ -523,9 +519,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════════════════
 # Two-column layout
-# ═══════════════════════════════════════════════════════════════════════════════
 col_input, col_result = st.columns([5, 5], gap="large")
 
 with col_input:
@@ -604,7 +598,7 @@ with col_input:
         </div>
         """, unsafe_allow_html=True)
 
-# ── Run inference when Analyse button is clicked ───────────────────────────────
+# Run inference when Analyse button is clicked
 if analyze_clicked:
     if not job_title.strip() or not job_description.strip():
         with col_input:
@@ -649,7 +643,7 @@ if analyze_clicked:
         }
         st.rerun()
 
-# ── Result panel — shows empty state or last prediction ────────────────────────
+# Result panel — shows empty state or last prediction
 with col_result:
     if "last_prediction" not in st.session_state:
         st.markdown(empty_state_html(), unsafe_allow_html=True)

@@ -1,14 +1,5 @@
-# ── explain_ui.py ─────────────────────────────────────────────────────────────
-# Pure-Python helpers for the explainability UI (no Streamlit imports).
-# Used by both app.py and pages/2_Explainability.py.
-#
-# Key exports:
-#   categorise_signals()        – maps SHAP tokens → human-readable fraud categories
-#   build_plain_english_summary() – produces a plain-English verdict paragraph
-#   build_highlight_spans()     – finds text spans to colour-highlight in the UI
-#   render_highlighted_html()   – renders highlighted spans as an HTML string
-#   structural_checklist()      – regex-based structural fraud checks on raw text
-#   redact_emails/phones()      – PII redaction before storing feedback
+# explain_ui.py — UI helper functions for explainability (no Streamlit imports)
+# Used by both app.py and pages/2_Explainability.py
 from __future__ import annotations
 
 import html
@@ -128,10 +119,9 @@ def redact_phones(text: str) -> str:
     return re.sub(r"(?<!\w)(?:\+?\d[\d\s().-]{7,}\d)(?!\w)", "[REDACTED_PHONE]", text)
 
 
-# ── Plain-English Explainability ───────────────────────────────────────────────
+# Plain-English explainability
 
-# Each category maps to: keywords (matched against signal tokens), icon, and a
-# template explanation shown to the user.
+# Maps keyword categories to icons and template explanations shown to users
 FRAUD_CATEGORIES: dict[str, dict] = {
     "Urgency & Pressure Language": {
         "keywords": {
@@ -255,8 +245,8 @@ _COMPANY_RE = re.compile(
 )
 
 
+# Return structural fraud-indicator checks for a given posting
 def structural_checklist(title: str, description: str) -> list[dict]:
-    """Return a list of structural fraud-indicator checks for the given posting."""
     text = f"{title} {description}"
     checks = [
         {
@@ -314,18 +304,13 @@ def structural_checklist(title: str, description: str) -> list[dict]:
     return checks
 
 
+# Map SHAP signal tokens to human-readable fraud categories
+# Returns categories where at least one token matched, sorted by total impact
 def categorise_signals(
     pos_signals: list[dict],
     neg_signals: list[dict],
 ) -> list[dict]:
-    """
-    Map SHAP signal tokens to human-readable fraud categories.
-
-    Returns a list of category dicts, each with:
-      - name, icon, direction ("fraud" | "legit"), matched_tokens, explanation
-    Only returns categories where at least one token matched.
-    """
-    # Build a lookup: lowercase token → (category_name, category_data)
+    # Build lookup: lowercase token → category name
     token_to_cat: dict[str, str] = {}
     for cat_name, cat in FRAUD_CATEGORIES.items():
         for kw in cat["keywords"]:
@@ -346,7 +331,7 @@ def categorise_signals(
         cat_name = token_to_cat.get(token)
         if cat_name:
             entry = cat_hits.setdefault(cat_name, {"tokens": [], "total_impact": 0.0, "direction": "legit"})
-            # If already present as fraud direction, keep whichever has more total impact
+            # Keep whichever direction has more total impact
             if entry["direction"] == "fraud":
                 if abs(signal["impact"]) > entry["total_impact"]:
                     entry["direction"] = "legit"
@@ -371,16 +356,13 @@ def categorise_signals(
     return result
 
 
+# Return a plain-English paragraph summarising the model verdict and key reasons
 def build_plain_english_summary(
     categorised: list[dict],
     fake_prob: float,
     label: str,
     checklist: list[dict],
 ) -> str:
-    """
-    Return a plain-English paragraph summarising the model's verdict and the
-    key reasons behind it.
-    """
     is_fake = label == "fake"
     pct = round(fake_prob * 100)
 

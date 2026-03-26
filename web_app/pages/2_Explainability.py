@@ -1,13 +1,12 @@
-# ── JobScan — Explainability Page ──────────────────────────────────────────────
-# Full explanation report for the last prediction stored in st.session_state.
-# Reads last_prediction / last_explanation written by app.py (detector page).
+# 2_Explainability.py — full explanation report for the last prediction
+# Reads last_prediction / last_explanation from st.session_state (written by app.py)
 #
 # Tabs:
-#   💡 Plain English  – categorised fraud patterns + structural checklist
-#   📊 Model Signals  – SHAP bar charts + occlusion audit
-#   🔍 Highlighted Text – colour-coded posting text
-#   🔬 Methodology    – architecture, metrics, dataset info
-#   💬 Feedback       – user feedback saved to feedback_log.csv
+#   Plain English  – categorised fraud patterns + structural checklist
+#   Model Signals  – SHAP bar charts + occlusion audit
+#   Highlighted Text – colour-coded posting text
+#   Methodology    – architecture, metrics, dataset info
+#   Feedback       – user feedback saved to feedback_log.csv
 from __future__ import annotations
 
 import csv
@@ -48,7 +47,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ── Theme (iOS light) ──────────────────────────────────────────────────────────
+# iOS light theme colour variables
 _bg       = "#f2f2f7"
 _text_col = "#1c1c1e"
 _inp_bg   = "#ffffff"
@@ -79,7 +78,7 @@ _hl_bg     = "#ffffff"
 _hl_col    = "#1c1c1e"
 _hl_bdr    = "rgba(60,60,67,0.18)"
 
-# ── Theme-dependent CSS ────────────────────────────────────────────────────────
+# Theme-dependent CSS
 st.markdown(f"""<style>
 html, body, .stApp {{
     background:{_bg} !important;
@@ -144,7 +143,7 @@ html, body, .stApp {{
 }}
 </style>""", unsafe_allow_html=True)
 
-# ── Static CSS ─────────────────────────────────────────────────────────────────
+# Static CSS
 st.markdown("""<style>
 [data-testid="stHeader"],[data-testid="stToolbar"],[data-testid="stDecoration"],
 [data-testid="stStatusWidget"],.stAppToolbar,#stDecoration,
@@ -276,7 +275,7 @@ section.main > div { overflow:visible !important; }
 </style>""", unsafe_allow_html=True)
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+# Helpers
 def risk_color(prob: float) -> str:
     if prob >= 0.65: return "#F87171"
     if prob >= 0.40: return "#FCD34D"
@@ -339,8 +338,8 @@ def _plotly_bar(df: pd.DataFrame, x_col: str, y_col: str,
     return fig
 
 
+# Render a row of pill badges for top SHAP tokens
 def _signal_badges(rows: list[dict], is_fake: bool) -> str:
-    """Render a row of pill badges for top SHAP tokens."""
     color  = "#F87171" if is_fake else "#34D399"
     bg     = "rgba(239,68,68,0.12)" if is_fake else "rgba(52,211,153,0.10)"
     border = "rgba(239,68,68,0.35)" if is_fake else "rgba(52,211,153,0.35)"
@@ -356,7 +355,7 @@ def _signal_badges(rows: list[dict], is_fake: bool) -> str:
     return f'<div style="display:flex;flex-wrap:wrap;gap:7px;padding:8px 0;">{pills}</div>'
 
 
-# ── Load model & session state ─────────────────────────────────────────────────
+# Load model and session state
 service = load_model()
 st.session_state.model_signature = service.model_signature
 st.session_state.threshold = service.threshold
@@ -364,7 +363,7 @@ st.session_state.threshold = service.threshold
 last_prediction  = st.session_state.get("last_prediction")
 last_explanation = st.session_state.get("last_explanation")
 
-# ── Header ─────────────────────────────────────────────────────────────────────
+# Header
 _hdr_bg  = "rgba(242,242,247,0.95)"
 _hdr_bdr = "rgba(60,60,67,0.18)"
 _hdr_shd = "0 1px 0 rgba(60,60,67,0.12),0 4px 16px rgba(0,0,0,0.05)"
@@ -396,7 +395,7 @@ with nav_col:
 
 st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-# ── Guard ──────────────────────────────────────────────────────────────────────
+# Guard — stop if no prediction in session state
 if not last_prediction or not last_explanation:
     st.markdown(f"""
     <div style="text-align:center;padding:5rem 2rem;animation:fadeSlideUp 0.5s ease both;">
@@ -406,7 +405,7 @@ if not last_prediction or not last_explanation:
     """, unsafe_allow_html=True)
     st.stop()
 
-# ── Derive data ────────────────────────────────────────────────────────────────
+# Derive data from last prediction
 text         = last_prediction["text"]
 pos_signals  = last_explanation.get("top_increase_fake", [])
 neg_signals  = last_explanation.get("top_decrease_fake", [])
@@ -416,7 +415,7 @@ all_signals  = pos_signals + neg_signals
 audit_rows   = (last_explanation.get("audit_top_increase_fake", []) +
                 last_explanation.get("audit_top_decrease_fake", []))
 
-# Plain-English data — computed once, used in the new tab
+# Plain-English data — computed once, used across tabs
 _title_val       = last_prediction.get("title", "")
 _description_val = last_prediction.get("description", "")
 _checklist       = structural_checklist(_title_val, _description_val)
@@ -435,7 +434,7 @@ spans    = build_highlight_spans(text, [
 ])
 rendered = render_highlighted_html(text, spans)
 
-# ── Uncertainty toggle ─────────────────────────────────────────────────────────
+# Uncertainty toggle
 if st.toggle("Recompute uncertainty with more samples (n=24)", value=False):
     preprocessed = service.preprocess_text(text)
     ci_low, ci_high = service.estimate_uncertainty_interval(preprocessed, n=24)
@@ -444,9 +443,7 @@ if st.toggle("Recompute uncertainty with more samples (n=24)", value=False):
     last_prediction.update({"ci_low": ci_low, "ci_high": ci_high,
                              "reliability_bucket": bucket, "reliability_msg": msg})
 
-# ═══════════════════════════════════════════════════════════════════════════════
 # Summary card
-# ═══════════════════════════════════════════════════════════════════════════════
 p              = last_prediction
 is_fake        = p["label"] == "fake"
 v_accent       = "#F87171" if is_fake else "#34D399"
@@ -534,9 +531,7 @@ if st.button("Copy summary as JSON"):
 
 st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════════════════
 # Tabs
-# ═══════════════════════════════════════════════════════════════════════════════
 tab_plain, tab_signals, tab_text, tab_method, tab_feedback = st.tabs([
     "💡  Plain English",
     "📊  Model Signals",
@@ -545,11 +540,11 @@ tab_plain, tab_signals, tab_text, tab_method, tab_feedback = st.tabs([
     "💬  Feedback",
 ])
 
-# ── Tab 0: Plain English ───────────────────────────────────────────────────────
+# Tab 0: Plain English
 with tab_plain:
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
-    # ── Summary paragraph ──────────────────────────────────────────────────────
+    # Summary paragraph
     _pe_is_fake = last_prediction.get("label") == "fake"
     _pe_accent  = "#F87171" if _pe_is_fake else "#34D399"
     _pe_bg      = "rgba(239,68,68,0.07)"  if _pe_is_fake else "rgba(52,211,153,0.07)"
@@ -569,7 +564,7 @@ with tab_plain:
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Fraud pattern cards ────────────────────────────────────────────────────
+    # Fraud pattern cards
     if _categorised:
         st.markdown(f"""
         <div style="font-size:15px;font-weight:700;color:{_H};
@@ -641,7 +636,7 @@ with tab_plain:
           See the <strong>Model Signals</strong> tab for the raw token-level breakdown.
         </div>""", unsafe_allow_html=True)
 
-    # ── Structural checklist ───────────────────────────────────────────────────
+    # Structural checklist
     st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
     st.markdown(f"""
     <div style="font-size:15px;font-weight:700;color:{_H};
@@ -680,7 +675,7 @@ with tab_plain:
         "They supplement the ML model verdict but do not replace it."
     )
 
-# ── Tab 1: Model Signals ───────────────────────────────────────────────────────
+# Tab 1: Model Signals
 with tab_signals:
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
@@ -830,7 +825,7 @@ with tab_signals:
         if last_explanation.get("stability"):
             st.markdown(f"**Explanation stability (RBO@10):** {last_explanation['stability']['rbo_top10']:.3f}")
 
-# ── Tab 2: Highlighted Text ────────────────────────────────────────────────────
+# Tab 2: Highlighted Text
 with tab_text:
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
@@ -867,11 +862,11 @@ with tab_text:
     if show_raw:
         st.text_area("Raw posting text", value=text, height=260, label_visibility="collapsed")
 
-# ── Tab 3: Methodology ─────────────────────────────────────────────────────────
+# Tab 3: Methodology
 with tab_method:
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
-    # Live performance metrics
+    # Live performance metrics from CSV (falls back to hardcoded values)
     _pf1, _ppr, _pre, _pob = 0.839, 0.903, 0.783, 0.933
     try:
         import csv as _csv
@@ -1018,7 +1013,7 @@ with tab_method:
         </div>
         """, unsafe_allow_html=True)
 
-# ── Tab 4: Feedback ────────────────────────────────────────────────────────────
+# Tab 4: Feedback
 with tab_feedback:
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
     st.markdown(f"""

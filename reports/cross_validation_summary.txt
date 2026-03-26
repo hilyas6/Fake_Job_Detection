@@ -1,0 +1,14 @@
+3-FOLD CROSS-VALIDATION RESULTS
+=======================================================
+Model          Fold 1   Fold 2   Fold 3     Mean     ±Std
+-------------------------------------------------------
+TextGCN        0.7870   0.8138   0.7605   0.7871   0.0218
+LightGBM       0.7692   0.8211   0.7598   0.7834   0.0269
+=======================================================
+
+Note: TextGCN uses a single seed per fold (not the 3-seed ensemble)
+so absolute values are slightly lower than the reported tuned model.
+
+TextGCN: 0.7871 ± 0.0218
+LightGBM: 0.7834 ± 0.0269
+TextGCN leads across CV folds.

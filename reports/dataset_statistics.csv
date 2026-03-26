@@ -1,0 +1,6 @@
+split,real,fake,total,fake_pct
+Train,10613,499,11112,4.49
+Val,1517,71,1588,4.47
+Test,3032,143,3175,4.5
+EMSCAD Total,15162,713,15875,4.49
+OpenBay (OOD),N/A,N/A,10000,unknown

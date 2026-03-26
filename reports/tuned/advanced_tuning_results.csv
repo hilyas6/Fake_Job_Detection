@@ -1,0 +1,6 @@
+trial,n_seeds,window_size,class_weight,weighted_ens,emscad_test_f1,precision,recall,openbay_recall,threshold,beats_current,elapsed_s
+adv_5seeds_window15,5,15,sqrt,False,0.822222,0.874016,0.776224,0.9619,0.48,False,1615.1
+adv_5seeds_window15_weighted,5,15,sqrt,True,0.826568,0.875,0.783217,0.9626,0.48,False,1174.1
+adv_5seeds_linear_weight,5,15,linear,False,0.823529,0.868217,0.783217,0.9672,0.52,False,1757.9
+adv_5seeds_window10,5,10,sqrt,False,0.822222,0.874016,0.776224,0.9529,0.48,False,1079.2
+adv_7seeds_window15,7,15,sqrt,False,0.823529,0.868217,0.783217,0.9666,0.5,False,1559.0

@@ -1,12 +1,4 @@
-# ── model_runtime.py ───────────────────────────────────────────────────────────
-# Defines the TextGCN inference class (ImprovedTextGCNService) and supporting
-# data classes. Loaded once via the Streamlit @st.cache_resource decorator.
-# Key responsibilities:
-#   - Load model weights, vocabulary graph, and TF-IDF vectoriser from disk
-#   - Predict fraud probability for a job posting
-#   - Estimate a confidence interval via Monte Carlo Dropout
-#   - Generate SHAP token attributions and an occlusion audit
-#   - Score input quality (missing fields, text length)
+# model_runtime.py — TextGCN inference service, loaded once via @st.cache_resource
 from __future__ import annotations
 
 import re
@@ -39,10 +31,9 @@ URL_RE = re.compile(r"(?:https?://\S+|www\.\S+)", re.IGNORECASE)
 SALARY_RE = re.compile(r"(?:[£$€]\s?\d|\b\d+\s?k\b|per\s+(?:hour|annum|year|month))", re.IGNORECASE)
 
 
-# ── Model architecture ─────────────────────────────────────────────────────────
+# Model architecture
+# 3-layer GCN with residual connections; must stay in sync with train_textgcn_enhanced.py
 class ImprovedWordGCN(nn.Module):
-    """3-layer GCN with residual connections.  Mirrors the training architecture
-    in src/train_textgcn_enhanced.py — must stay in sync with saved checkpoints."""
 
     def __init__(self, num_words: int, hidden_dim: int = 300, dropout: float = 0.35, residual_alpha: float = 0.7):
         super().__init__()
@@ -117,7 +108,7 @@ class ExplanationResult:
     mode: str = "fast"
 
 
-# ── Artifact loading helpers ───────────────────────────────────────────────────
+# Artifact loading helpers
 def _is_git_lfs_pointer(path: Path) -> bool:
     try:
         with path.open("r", encoding="utf-8") as f:
@@ -142,7 +133,7 @@ def tokenize(text: str):
     return TOKEN_RE.findall(text.lower())
 
 
-# ── Inference service ──────────────────────────────────────────────────────────
+# Inference service
 class ImprovedTextGCNService:
     def __init__(
         self,
@@ -226,8 +217,8 @@ class ImprovedTextGCNService:
         val = torch.tensor(x.data, dtype=torch.float32)
         return torch.sparse_coo_tensor(idx, val, (x.shape[0], x.shape[1])).coalesce()
 
+    # Single forward pass returning label and probabilities
     def predict_from_preprocessed(self, x) -> PredictionResult:
-        """Run a single forward pass and return label + probabilities."""
         x_t = self._scipy_to_torch_sparse(x).to(self.device)
         with torch.no_grad():
             logits = self.model.forward_with_cached_word_h(x_t, self._cached_word_h)
@@ -245,6 +236,7 @@ class ImprovedTextGCNService:
             threshold=self.threshold,
         )
 
+    # Estimate fake-probability range via MC dropout
     def estimate_uncertainty_interval(
         self,
         x_preprocessed,
@@ -252,7 +244,6 @@ class ImprovedTextGCNService:
         q_low: float = 0.10,
         q_high: float = 0.90,
     ) -> tuple[float, float]:
-        """Estimate a likely fake-probability range using MC dropout."""
         baseline = self.predict_from_preprocessed(x_preprocessed).fake_probability
         try:
             x_t = self._scipy_to_torch_sparse(x_preprocessed).to(self.device)
@@ -343,9 +334,9 @@ class ImprovedTextGCNService:
         self._shap_explainer = shap.Explainer(fake_probability, masker)
         return self._shap_explainer, None
 
+    # Extract token-level SHAP items across common payload shapes
     @staticmethod
     def _extract_shap_token_items(sample: Any) -> list[tuple[str, float]]:
-        """Extract token-level SHAP items across common payload shapes."""
         values = np.asarray(getattr(sample, "values", []))
         data = np.asarray(getattr(sample, "data", []), dtype=object)
 
@@ -483,7 +474,7 @@ class ImprovedTextGCNService:
         )
 
 
-# ── Cached loader (called once per Streamlit session) ──────────────────────────
+# Cached loader called once per Streamlit session
 @st.cache_resource(show_spinner=True)
 def load_model() -> ImprovedTextGCNService:
     return ImprovedTextGCNService(

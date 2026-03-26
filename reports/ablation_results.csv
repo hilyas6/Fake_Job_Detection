@@ -1,0 +1,7 @@
+variant,description,emscad_test_f1,emscad_precision,emscad_recall,openbay_recall,threshold,delta_vs_full,elapsed_s
+full_3layer_w15,"Full model (3-layer, α=0.7, window=15) [REFERENCE]",0.8235,0.8682,0.7832,0.9321,0.48,-0.0155,344.1
+no_residual_3layer_w15,"No residual (α=0, 3 layers)",0.8291,0.8636,0.7972,0.9572,0.46,-0.0099,354.9
+1layer_w15,1-layer GCN,0.8213,0.9,0.7552,0.422,0.4,-0.0177,232.8
+2layer_w15,2-layer GCN,0.8092,0.8908,0.7413,0.8302,0.48,-0.0298,228.8
+random_edges_3layer,Random edges (no PMI),0.8218,0.8561,0.7902,0.9308,0.42,-0.0172,380.2
+window5_3layer,PMI window=5,0.8222,0.874,0.7762,0.9226,0.5,-0.0168,146.7

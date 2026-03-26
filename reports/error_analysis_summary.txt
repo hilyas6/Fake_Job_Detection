@@ -1,0 +1,110 @@
+ERROR ANALYSIS – TextGCN Tuned (3-seed ensemble)
+Test set size : 3175
+Threshold     : 0.48
+F1=0.8253  Precision=0.8810  Recall=0.7762
+
+Confusion matrix:
+  True Negative  (correct real) : 3017
+  False Positive (real as fake) : 15
+  False Negative (fake as real) : 32
+  True Positive  (correct fake) : 111
+
+==================================================
+  FALSE POSITIVES – Real jobs misclassified as FAKE  (n=15)
+==================================================
+  Fake probability : mean=0.695  min=0.497  max=0.974
+  Text length (chars): mean=1015  median=1086
+  Word count         : mean=135  median=145
+  Has URL token      : 0.0%
+  Has EMAIL token    : 0.0%
+  Has MONEY token    : 20.0%
+  Avg [SEP] tokens   : 2.3
+  Short (<500 chars) : 2 (13.3%)
+  Long  (>=1500 chars): 1 (6.7%)
+
+  Top-5 examples (sorted by fake_prob desc):
+    [2] prob=0.974 len=601  "DATA ENTRY CLERK SPECIALIST [SEP] Data Entry Clerk Specialist serves to support the Director of Operatuions within the A..."
+    [5] prob=0.962 len=1082  "Customer Service Agent [SEP] Position: Call Center Customer Service AgentDo you make friends feel better when they are d..."
+    [6] prob=0.960 len=1381  "Quality Engineer [SEP] The Quality Engineer is responsible for managing all quality assurance/control related activities..."
+    [10] prob=0.846 len=562  "Staff Accountant [SEP] Description:Research &amp; resolve intercompany reconciling items, Cash application, review and p..."
+    [0] prob=0.837 len=650  "Casual/Part-Time Position [SEP] Our International Company is seeking an active employee. We give a work for everybody.Pa..."
+
+==================================================
+  FALSE NEGATIVES – Fake jobs misclassified as REAL  (n=32)
+==================================================
+  Fake probability : mean=0.319  min=0.120  max=0.468
+  Text length (chars): mean=1900  median=1720
+  Word count         : mean=261  median=236
+  Has URL token      : 0.0%
+  Has EMAIL token    : 0.0%
+  Has MONEY token    : 12.5%
+  Avg [SEP] tokens   : 2.2
+  Short (<500 chars) : 3 (9.4%)
+  Long  (>=1500 chars): 17 (53.1%)
+
+  Top-5 examples (sorted by fake_prob desc):
+    [30] prob=0.468 len=95  "5 Guys [SEP] Analyze the excel books of the franchise and then post them online for him to use...."
+    [4] prob=0.450 len=1813  "Earn the Income You Deserve [SEP] Prepare yourself to learn about an exciting way to earn money without leaving your hom..."
+    [29] prob=0.438 len=1121  "administrative assistant [SEP] Giromax technology is currently looking for an Administrative Assistant to provide timely..."
+    [5] prob=0.434 len=517  "FULL-TIME opportunity for Technical Project manager [SEP] Role: Technical Project ManagerLocation is Atlanta, GA or Alph..."
+    [19] prob=0.411 len=1936  "Use Your Spare Time to Start Earning More [SEP] Several people around the world have discovered for themselves how to ea..."
+
+==================================================
+  TRUE POSITIVES  – Correctly detected FAKE jobs  (n=111)
+==================================================
+  Fake probability : mean=0.944  min=0.485  max=1.000
+  Text length (chars): mean=2206  median=1887
+  Word count         : mean=296  median=278
+  Has URL token      : 0.0%
+  Has EMAIL token    : 0.0%
+  Has MONEY token    : 31.5%
+  Avg [SEP] tokens   : 2.9
+  Short (<500 chars) : 9 (8.1%)
+  Long  (>=1500 chars): 68 (61.3%)
+
+  Top-5 examples (sorted by fake_prob desc):
+    [0] prob=1.000 len=6756  "Senior Engineering Product Manager [SEP] Aptitude Staffing Solutions has redesigned the recruiting wheel. Our innovative..."
+    [1] prob=1.000 len=3068  "UST Testing Technician II [SEP] Jaco Oil and Refined Resources have partnered up in an effort to streamline the hiring p..."
+    [2] prob=1.000 len=3048  "UST Testing Technician II [SEP] Staffing &amp; Recruiting done right for the Oil &amp; Energy Industry!Represented candi..."
+    [3] prob=1.000 len=3299  "Project Manager: Engineer [SEP] Staffing &amp; Recruiting done right for the Oil &amp; Energy Industry!Represented candi..."
+    [4] prob=1.000 len=3800  "Health & Environmental Professional [SEP] Aptitude Staffing Solutions has redesigned the recruiting wheel. Our innovativ..."
+
+==================================================
+  TRUE NEGATIVES  – Correctly classified REAL jobs  (n=3017)
+==================================================
+  Fake probability : mean=0.195  min=0.056  max=0.472
+  Text length (chars): mean=2830  median=2672
+  Word count         : mean=402  median=379
+  Has URL token      : 1.3%
+  Has EMAIL token    : 0.0%
+  Has MONEY token    : 14.1%
+  Avg [SEP] tokens   : 3.3
+  Short (<500 chars) : 43 (1.4%)
+  Long  (>=1500 chars): 2551 (84.6%)
+
+  Top-5 examples (sorted by fake_prob desc):
+    [2253] prob=0.472 len=1607  "Sales Support Representative/ __MONEY__hr [SEP] Act as the primary, often self-directed, inside liaison between the comp..."
+    [1451] prob=0.469 len=222  "Desenvolvedor Web [SEP] Somos uma empresa de TI foda! [SEP] Você gosta de desenvolver? Essa é sua chance.#URL_01a736d89d..."
+    [799] prob=0.468 len=281  "cook [SEP] we require a full time live in cook for our busy #URL_dfd4941b450927ee779946f6ff451bae982e7e1b29f29b8b7995894..."
+    [2572] prob=0.463 len=2204  "Business Development Manager [SEP] Το #URL_bb79581a561837ad604b8fc4ab629753b36407cc3bc76c42e6e46d74bb78eba2# είναι μία ε..."
+    [34] prob=0.456 len=920  "Manager of Patient Care-Women/Families/Baby (Near Oshkosh, WI) [SEP] SalarySalary ranges to __MONEY__.--Run the day to d..."
+
+==================================================
+FP vs TN – Why were real jobs flagged as fake?
+==================================================
+  text_len            : FP=1015.20  TN=2829.87
+  word_count          : FP=135.47  TN=401.83
+  has_url             : FP=0.00  TN=0.01
+  has_email           : FP=0.00  TN=0.00
+  has_money           : FP=0.20  TN=0.14
+  n_sep_tokens        : FP=2.27  TN=3.31
+
+==================================================
+FN vs TP – Why were fake jobs missed?
+==================================================
+  text_len            : FN=1899.88  TP=2205.78
+  word_count          : FN=261.31  TP=295.87
+  has_url             : FN=0.00  TP=0.00
+  has_email           : FN=0.00  TP=0.00
+  has_money           : FN=0.12  TP=0.32
+  n_sep_tokens        : FN=2.16  TP=2.93
