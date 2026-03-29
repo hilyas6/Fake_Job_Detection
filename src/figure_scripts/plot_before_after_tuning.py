@@ -24,8 +24,8 @@ _PAIRS = [
     ("XGBoost",              "metrics_xgboost.csv",              "tuned/metrics_xgboost.csv"),
 ]
 
-COLOR_BEFORE = "#7f8c8d"
-COLOR_AFTER  = "#1abc9c"
+COLOR_BEFORE = "#4C72B0"   # blue
+COLOR_AFTER  = "#2ca02c"   # green
 
 
 def _load(rel: str) -> pd.Series | None:
@@ -73,7 +73,7 @@ def main() -> None:
             if abs(delta) > 0.001:
                 color = "#27ae60" if delta > 0 else "#e74c3c"
                 ax.text(max(av, bv) + 0.003, y[i] + bh / 2, f"{delta:+.3f}",
-                        va="center", ha="left", fontsize=7.5, color=color, fontweight="bold")
+                        va="center", ha="left", fontsize=10, color=color, fontweight="bold")
 
         ax.set_title(LABELS[metric], fontweight="bold", fontsize=13, pad=10)
         ax.set_xlim(x_min, x_max - 0.01)
@@ -87,7 +87,7 @@ def main() -> None:
     fig.suptitle("Model Performance: Before vs After Tuning", fontsize=16, fontweight="bold", y=1.01)
     plt.tight_layout()
 
-    out = PATHS.reports / "figures" / "04_before_after_tuning_comparison.png"
+    out = PATHS.reports / "figures" / "before_after_tuning.png"
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=300, bbox_inches="tight", facecolor="white")
     plt.close(fig)

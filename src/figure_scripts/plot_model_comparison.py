@@ -16,7 +16,15 @@ _OPENBAY = ["openbay_recall", "openbay_mean_prob", "openbay_median_prob"]
 _DROP    = {"vocab_size", "pmi_window_size", "pmi_threshold", "residual_alpha", "threshold", "trial", "version"}
 
 def _pretty(col: str) -> str:
-    s = col.replace("emscad_test_", "").replace("openbay_", "").replace("_", " ")
+    if col.startswith("emscad_test_"):
+        metric = col.replace("emscad_test_", "").replace("_", " ")
+        metric = re.sub(r"\bf1\b", "F1", metric, flags=re.I).title()
+        return f"{metric}\n(EMSCAD)"
+    if col.startswith("openbay_"):
+        metric = col.replace("openbay_", "").replace("_", " ")
+        metric = re.sub(r"\bf1\b", "F1", metric, flags=re.I).title()
+        return f"{metric}\n(OpenBay)"
+    s = col.replace("_", " ")
     return re.sub(r"\bf1\b", "F1", s, flags=re.I).title()
 
 def _label(row: pd.Series) -> str:
@@ -69,9 +77,10 @@ def plot_heatmap(df: pd.DataFrame, out: Path) -> None:
     fig.patch.set_facecolor("white")
     sns.heatmap(heat, annot=True, fmt=".3f", cmap="RdYlGn", linewidths=1.0,
                 cbar_kws={"label": "Score"}, annot_kws={"size": 9, "weight": "bold"}, ax=ax)
-    ax.set_title("All Models — Full Performance Matrix\n(sorted by EMSCAD Test F1)",
+    ax.set_title("All Models: Full Performance Matrix",
                  fontweight="bold", fontsize=14, loc="left", pad=16)
-    plt.xticks(rotation=35, ha="right", fontsize=10)
+
+    plt.xticks(rotation=0, ha="center", fontsize=10)
     plt.yticks(fontsize=10)
     plt.tight_layout()
     _save(fig, out)
@@ -87,9 +96,9 @@ def main() -> None:
 
     baseline = df[df["version"] == "baseline"] if "version" in df.columns else df
 
-    plot_grouped(baseline, _EMSCAD,  "EMSCAD Test Results — Baseline Models", out_dir / "01_emscad_bars.png")
-    plot_grouped(baseline, _OPENBAY, "OpenBay Generalisation — Baseline Models", out_dir / "02_openbay_bars.png")
-    plot_heatmap(baseline, out_dir / "03_professional_heatmap.png")
+    plot_grouped(baseline, _EMSCAD,  "EMSCAD Test Results: Baseline Models", out_dir / "emscad_model_comparison.png")
+    plot_grouped(baseline, _OPENBAY, "OpenBay Generalisation: Baseline Models", out_dir / "openbay_generalisation.png")
+    plot_heatmap(baseline, out_dir / "full_performance_heatmap.png")
     print("All figures saved.")
 
 
